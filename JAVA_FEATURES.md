@@ -137,4 +137,135 @@ empList.sort(comparator);
  - Hence, lambda expressions can appear only in places where functional interfaces are used.
  - <strong>@FunctionalInterface</strong> annotation helps designing an interface as a functional interface.
  - ```java.util.Comparator interface is example with 	int compare(T objectt1, T objectt2) as the abstract method```
-  
+ <table border="1" cellpadding="1" cellspacing="1" style="null">
+	<tbody>
+		<tr>
+			<td><strong>Type</strong></td>
+			<td><strong>Functional Interface</strong></td>
+			<td><strong>Abstract Method</strong></td>
+			<td><strong>Description</strong></td>
+		</tr>
+		<tr>
+			<td>Function</td>
+			<td style="null">Function&lt;T, R&gt;</td>
+			<td style="null">R apply(T t)</td>
+			<td style="null">
+			<p>Function that accepts a single argument and produces a result&nbsp;&nbsp;</p>
+			</td>
+		</tr>
+		<tr>
+			<td>Predicate</td>
+			<td>Predicate&lt;T&gt;</td>
+			<td style="null">boolean test(T t)</td>
+			<td>Boolean-valued function that takes a single argument</td>
+		</tr>
+		<tr>
+			<td>Consumer</td>
+			<td>Consumer&lt;T&gt;</td>
+			<td>void accept(T t)</td>
+			<td>Function that accepts a single argument but returns no result</td>
+		</tr>
+		<tr>
+			<td>Supplier</td>
+			<td>Supplier&lt;T&gt;</td>
+			<td>T get()</td>
+			<td>A function that denotes a supplier of results</td>
+		</tr>
+	</tbody>
+</table>
+
+
+##### Streams :
+ - A Stream denotes the flow of a group of elements in sequence from a specific source and supports different data processing operations.
+ - In other words, it provides an abstraction over an existing collection.
+ - The data processing operations like filter, map, sort, count, etc. can be easily used to manipulate the data in a stream.
+```
+String fileName = "C://Employees.txt";
+// Reading file into stream inside try-with-resources
+try (Stream<String> stream = Files.lines(Paths.get(fileName))) {
+    stream.forEach(System.out::println);
+} catch (IOException excIO) {
+    e.printStackTrace();
+}
+```
+
+```
+// Pipeline - filtered and sorted stream of employees
+Stream<Employee> sortedEmpStream = lstEmp.stream()
+    .filter(emp -> emp.getYearsInOrg() < 1)
+    .sorted((e1, e2) -> e1.getId() - e2.getId());
+```
+ - The collect() method converts a stream to another form.
+ - Java 8 introduces java.util.stream.Collectors which provides implementations of the Collector interface through many useful static methods like toList(), toMap(), groupingBy(), maxBy(), minBy() etc.
+ - <strong>Intermediate Operations</strong> – These are ones, which return another stream, and can be chained together. `For example filter(), sort(), map(), etc.`
+ - <strong>Terminal Operations</strong> – These are the ones, which produce a result from the pipeline. `This result can be any non-stream value like List, Integer, void, etc. forEach() and collect() methods are terminal operations.`
+ - <strong>Intermediate operations are lazy, i.e. they do not perform any processing until a terminal operation is called on the stream. This may improve performance, as a stream is not processed until required.</strong>
+
+##### Optional <> Classes :
+ - To avoid null checks.
+ <table border="1" cellpadding="1" cellspacing="1" style="null">
+	<tbody>
+		<tr>
+			<td><strong>Name</strong></td>
+			<td><strong>Description</strong></td>
+		</tr>
+		<tr>
+			<td>
+			<p>Optional &lt;T&gt;&nbsp;empty()</p>
+			</td>
+			<td>
+			<p>Returns an empty Optional.</p>
+			</td>
+		</tr>
+		<tr>
+			<td style="null">T get()</td>
+			<td>
+			<p>Returns the value, if any. Throws NoSuchElementException,otherwise.</p>
+			</td>
+		</tr>
+		<tr>
+			<td>boolean&nbsp;isPresent()</td>
+			<td>
+			<p>Returns true when there is a value. Returns false, otherwise.</p>
+			</td>
+		</tr>
+		<tr>
+			<td>T orElse(T other)</td>
+			<td>
+			<p>Returns the value, if any. Returns the argument being passed, otherwise.</p>
+			</td>
+		</tr>
+		<tr>
+			<td>Optional&lt;T&gt; of(T value)</td>
+			<td>
+			<p>Returns&nbsp;Optional that holds the non-null value that is passed as argument.</p>
+			</td>
+		</tr>
+		<tr>
+			<td style="null">Optional&lt;T&gt; ofNullable(T value)</td>
+			<td style="null">Returns Optional that holds the value being passed as argument if non-null. Returns empty Optional, otherwise</td>
+		</tr>
+		<tr>
+			<td style="null">Optional&lt;U&gt; flatMap (Function&lt;? super T, Optional&lt;U&gt;&gt; mapper)</td>
+			<td>Applies the specified Optional - bearing mapping function to the value (if present) and returns the result. Returns empty Optional, otherwise.</td>
+		</tr>
+		<tr>
+			<td>Optional&lt;U&gt; map (Function&lt;? super T, ? extends U&gt; mapper)</td>
+			<td>Applies the specified Optional - bearing mapping function to the value (if present). And, if the result does not equal null, returns an Optional that describes the result.</td>
+		</tr>
+	</tbody>
+</table>
+
+ - The intended usage of Optional is primarily as a return type. 
+ - Avoid using it as a field in a class since it is not serializable.
+ - Avoid using it as a parameter for methods and constructors since it will lead to complicated code needlessly.
+ - Optional type variable must never be null.
+ ```
+ // Method will return Optional if k is not found
+public Optional<Demo> findKey(String k) { 
+  … 
+}
+Demo demo = findKey(k).orElse(Demo.DEFAULT);
+```
+
+
