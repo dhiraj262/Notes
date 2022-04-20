@@ -1,4 +1,5 @@
 ### Java Questions :
+- https://github.com/learning-zone/java-interview-questions/blob/master/collections-questions.md
 
 ##### 1. Why Deque is better than Stack ?
 1. <strong>Object oriented design</strong> - Inheritance, abstraction, classes and interfaces: Stack is a class, Deque is an interface. Only one class can be extended, whereas any number of interfaces can be implemented by a single class in Java (multiple inheritance of type). Using the Deque interface removes the dependency on the concrete Stack class and its ancestors and gives you more flexibility, e.g. the freedom to extend a different class or swap out different implementations of Deque (like LinkedList, ArrayDeque).
