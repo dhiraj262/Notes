@@ -62,3 +62,53 @@
   - <strong>Step 5 :</strong> The `AuthenticationProvider` calls the `loadUserByUsername(username)` method of the `UserDetailsService` and gets back the `UserDetails object` containing all the data of the user. The most important data is the password becuase it will be used to check whether the provided password is correct. If no user is found with the given user name, a `UsernameNotFoundException is thrown`.
   - <strong>Step 6 :</strong> The `AuthenticationProvider` after receiving the `UserDetails` checks the passwords and authenticates the user. If the passwords do not match it throws a `AuthenticationException`. However, if the authentication is successful, a `UsernamePasswordAuthenticationToken` is created, and the fields principal, credentials, and authenticated are set to appropriate values .
   - <strong>Step 7 :</strong>  On successful authentication, the `SecurityContext` is updated with the details of the current authenticated user. `SecurityContext` can be used in several parts of the app to check whether any user is currently authenticated and if so, what are the user’s details.
+
+##### @EnableWebSecurity: This annotation enables Spring Security’s web security support to your application
+```
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+@EnableWebSecurity
+public class SecurityConfig extends WebSecurityConfigurerAdapter {
+	@Autowired
+	public void configureGlobal(AuthenticationManagerBuilder auth) throws Exception {
+		auth.inMemoryAuthentication()
+			.withUser("Dhiraj").password("{noop}d@123").roles("ADMIN")
+			.and()
+			.withUser("abc").password("{noop}a@123").roles("USER");
+	}
+	
+	@Override
+	protected void configure(HttpSecurity http) throws Exception {
+		http.authorizeRequests()
+		.antMatchers("/**").hasAnyRole("EMPLOYEE","USER")
+			.anyRequest().authenticated()			
+			.and().formLogin();					
+	}
+}
+
+```
+##### configureGlobal(AuthenticationManagerBuilder auth) only provides information about how to authenticate application users.
+
+ - How does Spring Security know which requests to authenticate?
+ - How does Spring Security know whether to support form-based or HTTP Basic authentication?
+ - How to configure secure logout feature?
+ - How to configure concurrent session management for restricting multiple sessions at a time?
+ - How to configure URL based security which is to restrict the URL access to various roles?
+ * All these types of required security features can be configured through the HttpSecurity of configure() method.
+
+##### Spring Security helps us to prevent a user from concurrently accessing the application. SessionManagementFilter of Spring Security API handles this requirement and we can also specify how many numbers of sessions allowed per user through the below configuration.
+```
+http.sessionManagement().maximumSessions(1)
+
+```
+
+##### Remember Me Service :
+ - If the user has enabled the remember-me checkbox during authentication, then the application creates a cookie(username, expire time/date with Cookie signature details),  sends this cookie in its response to the client and which client (browser) will store it.
+
+ - The browser will send the cookie along with the subsequent user requests to the application, Spring security will retrieve the user password details based on the cookie stored username with the help of the UserDetailsService of Authentication manager and generates the new cookie signature.
+
+ - If the generated cookie signature and the client sent cookie signature are matching then it will allow the user to login without providing authentication. The remember me token is valid only till it reaches the expiration time or the user explicitly logout from the application.
