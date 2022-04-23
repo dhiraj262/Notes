@@ -5,6 +5,10 @@
  - https://medium.com/geekculture/spring-security-authentication-process-authentication-flow-behind-the-scenes-d56da63f04fa
  - https://www.baeldung.com/security-spring
 
+
+ - <strong>Spring Security provides the following built in mechanisms for reading a username and password from the HttpServletRequest.</strong>
+
+
 ##### Authentication : 
  - Authentication is how we verify the identity of who is trying to access a particular resource. A common way to authenticate users is by requiring the user to enter a username and password.
 ##### Authorization : 
@@ -52,9 +56,9 @@
 
 
   - <strong>Step 1 :</strong> When the server receives a request for authentication, such as a login request, it is first intercepted by the Authentication Filter in the Filter Chain.
-  - <strong>Step 2 :</strong> A UsernamePasswordAuthenticationToken is created using the username and password provided by the user. As discussed above, the UsernamePasswordAuthenticationToken is an implementation of the Authentication interface and used when a user wants to authenticate using a username and password. 
-  - <strong>Step 3 :</strong>  The UsernamePasswordAuthenticationToken is passed to the AuthenticationManager so that the token can be authenticated.
-  - <strong>Step 4 :</strong>  The AuthenticationManager delegates the authentication to the appropriate AuthenticationProvider. 
-  - <strong>Step 5 :</strong> The AuthenticationProvider calls the loadUserByUsername(username) method of the UserDetailsService and gets back the UserDetails object containing all the data of the user. The most important data is the password becuase it will be used to check whether the provided password is correct. If no user is found with the given user name, a UsernameNotFoundException is thrown.
-  - <strong>Step 6 :</strong> The AuthenticationProvider after receiving the UserDetails checks the passwords and authenticates the user. If the passwords do not match it throws a AuthenticationException. However, if the authentication is successful, a UsernamePasswordAuthenticationToken is created, and the fields principal, credentials, and authenticated are set to appropriate values .
-  - <strong>Step 7 :</strong>  On successful authentication, the SecurityContext is updated with the details of the current authenticated user. SecurityContext can be used in several parts of the app to check whether any user is currently authenticated and if so, what are the user’s details.
+  - <strong>Step 2 :</strong> When the username and password are submitted, the `UsernamePasswordAuthenticationFilter` authenticates the username and password. The `UsernamePasswordAuthenticationFilter` creates a `UsernamePasswordAuthenticationToken` which is a type of Authentication by extracting the username and password from the `HttpServletRequest`.
+  - <strong>Step 3 :</strong>  The `UsernamePasswordAuthenticationToken` is passed to the `AuthenticationManager` so that the token can be authenticated.
+  - <strong>Step 4 :</strong>  The `AuthenticationManager` delegates the authentication to the appropriate `AuthenticationProvider`. 
+  - <strong>Step 5 :</strong> The `AuthenticationProvider` calls the `loadUserByUsername(username)` method of the `UserDetailsService` and gets back the `UserDetails object` containing all the data of the user. The most important data is the password becuase it will be used to check whether the provided password is correct. If no user is found with the given user name, a `UsernameNotFoundException is thrown`.
+  - <strong>Step 6 :</strong> The `AuthenticationProvider` after receiving the `UserDetails` checks the passwords and authenticates the user. If the passwords do not match it throws a `AuthenticationException`. However, if the authentication is successful, a `UsernamePasswordAuthenticationToken` is created, and the fields principal, credentials, and authenticated are set to appropriate values .
+  - <strong>Step 7 :</strong>  On successful authentication, the `SecurityContext` is updated with the details of the current authenticated user. `SecurityContext` can be used in several parts of the app to check whether any user is currently authenticated and if so, what are the user’s details.
