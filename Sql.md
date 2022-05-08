@@ -33,6 +33,17 @@
   SELECT COUNT(*), gender FROM Employees WHERE DOB BETWEEN '01/01/1960' AND '31/12/1975' GROUP BY gender;
   ```
   
+   ### 5. Delete Duplicate rows from SQL table.
+   ```
+   DELETE FROM [Employee]
+    WHERE ID NOT IN
+    (
+        SELECT MAX(ID) AS MaxID
+        FROM [Employee]
+        GROUP BY [FirstName],  
+                 [Country]
+    );
+   ```
   
   
   ## Resources :
