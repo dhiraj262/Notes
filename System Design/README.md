@@ -1,151 +1,164 @@
-# System Design Learning Plan (2 Months)
+# System Design Learning Plan (3 Months)
 
-This comprehensive 60-day plan covers **High-Level Design (HLD)**, **Low-Level Design (LLD)**, and **Object-Oriented Design (OOD)** to prepare you for system design interviews and real-world engineering challenges.
+This comprehensive 90-day plan covers **High-Level Design (HLD)**, **Low-Level Design (LLD)**, **Object-Oriented Design (OOD)**, and **AI/ML System Design**. It is designed to prepare you for senior engineering interviews and real-world architecture challenges.
 
 ## Goals
-1.  Master fundamental System Design concepts (Scalability, Availability, Consistency).
-2.  Proficiency in LLD/OOD (Design Patterns, Schema Design, Code modularity).
-3.  Ability to design large-scale systems (e.g., Uber, Twitter) end-to-end.
-4.  Retention through active recall (Flashcards, Mock Interviews).
+1.  **Foundational Mastery**: Deep understanding of OOD, Design Patterns, and DB Internals.
+2.  **Distributed Systems**: Mastery of scalability, consistency, and availability trade-offs.
+3.  **AI/ML Competence**: Ability to design machine learning systems (Recommenders, LLM apps).
+4.  **Retention**: Active recall through flashcards, teaching, and implementation.
 
-## Recommended Resources
-*   **Books**:
-    *   *Designing Data-Intensive Applications* (DDIA) by Martin Kleppmann (The Bible of HLD).
-    *   *System Design Interview – An Insider's Guide* (Vol 1 & 2) by Alex Xu.
-    *   *Head First Design Patterns* (for LLD).
-*   **Websites & Repos**:
-    *   [System Design Primer (GitHub)](https://github.com/donnemartin/system-design-primer)
-    *   [Refactoring.guru](https://refactoring.guru/design-patterns) (Excellent for Design Patterns).
-    *   [High Scalability](http://highscalability.com/) (Real-world case studies).
-    *   [LeetCode Discuss](https://leetcode.com/discuss/interview-question?currentPage=1&orderBy=most_relevant&query=system%20design) (Recent interview questions).
+## 📚 Top Quality Resources
 
----
+### Books
+*   **The Bible**: *Designing Data-Intensive Applications* (DDIA) by Martin Kleppmann.
+*   **HLD**: *System Design Interview – An Insider's Guide* (Vol 1 & 2) by Alex Xu.
+*   **LLD**: *Head First Design Patterns* or *Clean Architecture* by Uncle Bob.
+*   **AI**: *Machine Learning System Design Interview* by Alex Xu & Ali Aminian.
 
-## Phase 1: Foundations, OOD & LLD (Days 1-20)
+### Websites & GitHub Repos
+*   [System Design Primer (GitHub)](https://github.com/donnemartin/system-design-primer) - The gold standard.
+*   [Refactoring.guru](https://refactoring.guru/design-patterns) - Best for LLD/Patterns.
+*   [Tech Interview Handbook](https://github.com/yangshun/tech-interview-handbook) - Comprehensive guide.
+*   [ML System Design (GitHub)](https://github.com/alirezadir/Machine-Learning-Interviews) - For the AI section.
+*   [High Scalability](http://highscalability.com/) - Real-world case studies.
 
-### Week 1: OOP Principles & Design Patterns Basics
-*   **Day 1**: **OOP Principles Review**. Encapsulation, Abstraction, Inheritance, Polymorphism.
-    *   *Task*: Explain these concepts to a friend or rubber duck.
-*   **Day 2**: **SOLID Principles**. S.O.L.I.D deeply explained with code examples.
-    *   *Resource*: DigitalOcean/GeeksForGeeks articles on SOLID.
-*   **Day 3**: **UML Basics**. Class diagrams, Sequence diagrams, Activity diagrams.
-    *   *Task*: Draw a class diagram for a simple Library Management System.
-*   **Day 4**: **Creational Design Patterns**. Singleton, Factory, Builder.
-    *   *Ref*: Refactoring.guru.
-*   **Day 5**: **Structural Design Patterns**. Adapter, Decorator, Facade, Proxy.
-*   **Day 6**: **Behavioral Design Patterns**. Observer, Strategy, Command.
-*   **Day 7**: **Review & Flashcards**. Create Anki cards for patterns and SOLID principles.
-    *   *Project*: Implement a simple Logger using Singleton and Chain of Responsibility.
-
-### Week 2: Advanced LLD & Schema Design
-*   **Day 8**: **Concurrency & Multithreading**. Threads, Locks, Synchronization, Thread Pool.
-*   **Day 9**: **Database Schema Design**. ER Diagrams, Normalization (1NF, 2NF, 3NF).
-    *   *Task*: Design DB schema for an E-commerce Order system.
-*   **Day 10**: **LLD Problem: Parking Lot**.
-    *   *Focus*: Classes (Vehicle, Spot, Ticket), Interfaces, Extensibility.
-*   **Day 11**: **LLD Problem: Elevator System**.
-    *   *Focus*: State Pattern, Scheduling algorithms.
-*   **Day 12**: **LLD Problem: Movie Ticket Booking System** (BookMyShow).
-    *   *Focus*: Concurrency (locking seats).
-*   **Day 13**: **LLD Problem: Design a Game** (Chess/Tic-Tac-Toe/Deck of Cards).
-    *   *Focus*: Game loop, Object interactions.
-*   **Day 14**: **Code Review Simulation**. Take your code from Day 10-13, critique it against SOLID principles.
-
-### Week 3: LLD Wrap-up & Transition to HLD
-*   **Day 15**: **API Design**. REST vs GraphQL vs gRPC. Best practices for URL naming, versioning.
-*   **Day 16**: **Caching Strategies (LLD Level)**. LRU Cache implementation.
-    *   *Task*: Implement LRU Cache in code (LeetCode #146).
-*   **Day 17**: **Rate Limiter (LLD)**. Token Bucket, Leaky Bucket algorithms implementation.
-*   **Day 18**: **Testing**. Unit Testing (JUnit/PyTest), Mocking.
-*   **Day 19**: **LLD Mock Interview**. Find a peer or use a platform like Pramp.
-*   **Day 20**: **Buffer Day / Revision**. Review weak spots in Design Patterns.
+### 📰 Must-Read Newsletters
+Stay updated with industry trends by subscribing to these:
+1.  **ByteByteGo** (Alex Xu) - Visual system design explanations.
+2.  **The Pragmatic Engineer** (Gergely Orosz) - Engineering culture & trends.
+3.  **System Design Newsletter** (Neo Kim) - Deep dives into specific architectures.
+4.  **The Polymathic Engineer** - Algorithms & Distributed Systems.
+5.  **Big Tech Digest** - Aggregated tech blog posts from huge companies.
 
 ---
 
-## Phase 2: High-Level Design (HLD) Components (Days 21-40)
+## Month 1: Foundations, OOD & Database Internals (Days 1-30)
 
-### Week 4: HLD Core Concepts
-*   **Day 21**: **Scalability Basics**. Vertical vs Horizontal Scaling, Latency vs Throughput.
-    *   *Reading*: DDIA Chapter 1.
-*   **Day 22**: **Load Balancing**. L4 vs L7 LB, Algorithms (Round Robin, Least Conn). Nginx/HAProxy.
-*   **Day 23**: **Databases**. SQL vs NoSQL (Document, Columnar, Key-Value, Graph). ACID vs BASE.
-    *   *Task*: Create a comparison chart of PostgreSQL, MongoDB, Cassandra, Redis.
-*   **Day 24**: **Database Replication & Sharding**. Master-Slave, Master-Master, Partitioning strategies.
-*   **Day 25**: **CAP Theorem & PACELC**. Understanding trade-offs in distributed systems.
-*   **Day 26**: **Caching (System Level)**. Write-through, Write-back, Write-around. Redis/Memcached.
-    *   *Problem*: How to handle cache stampede?
-*   **Day 27**: **Consistent Hashing**. Why it's needed for distributed caching/storage.
-    *   *Task*: Watch a video explanation and implement a toy version.
+### Week 1: OOD & Design Patterns (The "Code" Layer)
+*   **Day 1: SOLID Principles**. Deep dive into SRP, OCP, LSP, ISP, DIP.
+    *   *Task*: Refactor a bad piece of code to follow SOLID.
+*   **Day 2: UML & Class Diagrams**. Relationships (Association, Aggregation, Composition).
+*   **Day 3: Creational Patterns**. Singleton, Factory, Builder.
+*   **Day 4: Structural Patterns**. Adapter, Decorator, Facade.
+*   **Day 5: Behavioral Patterns I**. Observer, Strategy (crucial for payment systems).
+*   **Day 6: Behavioral Patterns II**. Command, State (crucial for Order/Ride status).
+*   **Day 7: LLD Practice**. Design a **Parking Lot** (Classes, Interfaces).
 
-### Week 5: Advanced Distributed Components
-*   **Day 28**: **Message Queues**. Kafka, RabbitMQ. Pub-Sub model. Async processing.
-*   **Day 29**: **Content Delivery Network (CDN)**. How CDNs work (Push vs Pull). Edge locations.
-*   **Day 30**: **Unique ID Generators**. UUID, Snowflake, Ticket Server.
-*   **Day 31**: **Distributed Transactions**. Two-Phase Commit (2PC), Sagas Pattern.
-*   **Day 32**: **Monitoring & Alerting**. Metrics (Prometheus), Logging (ELK Stack), Tracing.
-*   **Day 33**: **Security Basics**. HTTPS, TLS, OAuth 2.0, JWT.
-*   **Day 34**: **Search Engines**. Inverted Index, Elasticsearch basics.
+### Week 2: Concurrency & OS Basics
+*   **Day 8: Processes vs Threads**. Stack vs Heap. Context Switching.
+*   **Day 9: Concurrency Primitives**. Locks, Mutex, Semaphores, Monitors.
+*   **Day 10: Deadlocks & Race Conditions**. How to prevent them.
+*   **Day 11: Java/Python Concurrency**. Thread Pools, Futures, CompletableFuture.
+*   **Day 12: LLD Practice**. Design a **Task Scheduler** or **Rate Limiter (Class Level)**.
+*   **Day 13: LLD Practice**. Design a **Movie Ticket Booking System** (Handling concurrency).
+*   **Day 14: Review**. Flashcards on Patterns & Concurrency.
 
-### Week 6: Mini-Projects & Consolidation
-*   **Day 35**: **Project: URL Shortener (TinyURL)**.
-    *   *Focus*: Hashing, Database choice, Scale estimation.
-*   **Day 36**: **Project: Pastebin**.
-    *   *Focus*: Storage cost estimation, Expiration policy.
-*   **Day 37**: **Project: Notification System**.
-    *   *Focus*: Message Queues, Push vs Pull.
-*   **Day 38**: **Back-of-the-envelope Math**. Review powers of two, latency numbers (RAM vs Disk vs Network).
-*   **Day 39**: **Review Week 4-5**. Flashcard blast.
-*   **Day 40**: **Buffer Day**. Read a random "High Scalability" article.
+### Week 3: Database Internals (The "Data" Layer)
+*   **Day 15: Storage Engines**. LSM Trees (Cassandra/Kafka) vs B-Trees (SQL/Mongo).
+    *   *Reading*: DDIA Chapter 3.
+*   **Day 16: Indexing**. Hash Indexes, SSTables, Bloom Filters.
+*   **Day 17: Transactions (ACID)**. Atomicity, Isolation Levels (Read Committed, Serializable).
+*   **Day 18: NoSQL Types**. Document, Column-family, Graph, Key-Value. When to use what?
+*   **Day 19: SQL vs NoSQL Modeling**. Normalization vs Denormalization.
+*   **Day 20: LLD Practice**. Design **Tic-Tac-Toe** or **Chess** (Game Loop, State).
 
----
-
-## Phase 3: Real-World HLD System Design (Days 41-60)
-
-### Week 7: The "Design X" Questions
-*   **Day 41**: **Design a Chat Application (WhatsApp/Messenger)**.
-    *   *Key*: WebSockets, Message storage, Online status.
-*   **Day 42**: **Design a Social Media Feed (Twitter/Facebook)**.
-    *   *Key*: Fan-out service (Push vs Pull), Feed generation.
-*   **Day 43**: **Design a Video Streaming Service (YouTube/Netflix)**.
-    *   *Key*: Chunking, Transcoding, CDN usage, Adaptive Bitrate Streaming.
-*   **Day 44**: **Design a Ride-Sharing App (Uber/Lyft)**.
-    *   *Key*: Geo-hashing (QuadTree/Google S2), Location updates, Matching logic.
-*   **Day 45**: **Design an E-commerce Store (Amazon)**.
-    *   *Key*: Inventory management (concurrency), Shopping cart, Checkout flow.
-*   **Day 46**: **Design a Web Crawler (Google Search)**.
-    *   *Key*: Politeness, URL Frontier, DNS resolution, Deduplication.
-*   **Day 47**: **Design a Typeahead/Autocomplete System**.
-    *   *Key*: Trie data structure, Top-k heavy hitters.
-
-### Week 8: Advanced Scenarios & Final Polish
-*   **Day 48**: **Design Google Maps**.
-    *   *Key*: Graph algorithms (Dijkstra/A*), Tile serving.
-*   **Day 49**: **Design a Rate Limiter (API Gateway)**.
-    *   *Key*: Distributed counting, Sliding window log.
-*   **Day 50**: **Design Distributed Job Scheduler**.
-    *   *Key*: Leader election, Cron parsing.
-*   **Day 51**: **Mock Interview 1**. Focus on Requirements Gathering and Scope definition.
-*   **Day 52**: **Mock Interview 2**. Focus on HLD Diagramming and Trade-off discussions.
-*   **Day 53**: **Mock Interview 3**. Focus on Deep Dive and Bottleneck identification.
-*   **Day 54**: **Read: Google File System (GFS) Paper**. Or BigTable paper.
-*   **Day 55**: **Read: Dynamo Paper (Amazon)**. Understanding eventual consistency history.
-*   **Day 56**: **Final Project: Design YOUR System**.
-    *   *Task*: Pick a system you use (e.g., Spotify) and write a full design doc.
-*   **Day 57**: **Review: Failure Scenarios**. What if the DB dies? What if the cache fills up?
-*   **Day 58**: **Behavioral Prep**. "Tell me about a time you designed a difficult system."
-*   **Day 59**: **Rest & Light Review**. Review your cheat sheets.
-*   **Day 60**: **Ready**. You are prepared.
+### Week 4: LLD Wrap-up & Transition
+*   **Day 21: API Design**. REST (Resources, Verbs) vs GraphQL (Schema, Resolvers).
+*   **Day 22: gRPC & Protocol Buffers**. High-performance inter-service communication.
+*   **Day 23: Testing Strategies**. Unit, Integration, End-to-End. TDD basics.
+*   **Day 24: Code Quality**. DRY, KISS, YAGNI. Code Review checklist.
+*   **Day 25: LLD Mock Interview**. Peer mock: "Design an Elevator System".
+*   **Day 26-30: Buffer/Review**. Catch up on DDIA reading. Build a simple CLI tool.
 
 ---
 
-## Retention Strategies
-1.  **Flashcards**: Use Anki. Create cards for every new term (e.g., "What is Consistent Hashing?", "Pros/Cons of NoSQL").
-2.  **Feynman Technique**: After every topic, try to explain it simply (out loud or writing) as if teaching a junior engineer.
-3.  **Spaced Repetition**: Re-visit Day 1-10 topics on Day 20, 30, and 50.
-4.  **Implement It**: Don't just draw boxes. Code a simple Redis-backed cache or a WebSocket chat server.
+## Month 2: Core HLD & Distributed Systems (Days 31-60)
 
-## Daily Routine Template
-*   **30 Mins**: Read/Watch concept (YouTube/Book).
-*   **30 Mins**: Active Note-taking (summarize in your own words).
-*   **45 Mins**: Problem Solving / Diagramming / Coding.
-*   **15 Mins**: Review Flashcards.
+### Week 5: Distributed Foundations
+*   **Day 31: Scalability**. Vertical (Scale-up) vs Horizontal (Scale-out).
+*   **Day 32: Load Balancing**. L4 vs L7. Algorithms (Round Robin, Consistent Hashing).
+*   **Day 33: Replication**. Single-Leader, Multi-Leader, Leaderless.
+    *   *Reading*: DDIA Chapter 5.
+*   **Day 34: Partitioning/Sharding**. Key-based, Range-based. Rebalancing.
+*   **Day 35: CAP & PACELC**. Consistency vs Availability.
+*   **Day 36: Caching Patterns**. Cache-Aside, Write-Through. Redis/Memcached internals.
+*   **Day 37: Design Case**. **URL Shortener (TinyURL)**.
+
+### Week 6: Async & Consistency
+*   **Day 38: Message Queues**. Kafka vs RabbitMQ. Topics, Partitions, Offset.
+*   **Day 39: Event-Driven Architecture**. Pub-Sub pattern.
+*   **Day 40: Distributed Transactions**. 2PC, Sagas (Choreography vs Orchestration).
+*   **Day 41: Idempotency**. Why it matters in payments and messaging.
+*   **Day 42: Unique ID Generation**. Snowflake, UUID.
+*   **Day 43: Consistency Models**. Strong, Eventual, Causal.
+*   **Day 44: Design Case**. **Notification System**.
+
+### Week 7: Core System Design Cases
+*   **Day 45: Design a Chat App (WhatsApp)**. WebSockets, Message storage.
+*   **Day 46: Design a Rate Limiter (Distributed)**. Redis + Lua script.
+*   **Day 47: Design a Key-Value Store**. Replication, Tunable consistency (Quorums).
+*   **Day 48: Design a Web Crawler**. URL Frontier, Politeness, Parsing.
+*   **Day 49: Design Youtube/Netflix**. CDN, Transcoding, Adaptive Streaming.
+*   **Day 50: Design Google Drive**. Chunking, Deduplication, Sync.
+*   **Day 51: Review**. Review detailed notes on the above cases.
+
+### Week 8: Advanced Data Systems
+*   **Day 52: Search Engines**. Inverted Index, Elasticsearch, Lucene segments.
+*   **Day 53: Design Typeahead**. Tries, Top-K problems.
+*   **Day 54: Distributed Logging & Monitoring**. ELK Stack, Prometheus, Grafana.
+*   **Day 55: Batch vs Stream Processing**. Hadoop/MapReduce vs Flink/Spark Streaming.
+    *   *Reading*: DDIA Chapter 10.
+*   **Day 56: Geo-Spatial Indexing**. QuadTrees, Google S2.
+*   **Day 57: Design Uber/Lyft**. Location updates, Matchmaking.
+*   **Day 58-60: Buffer/Review**.
+
+---
+
+## Month 3: AI/ML Systems & Advanced Topics (Days 61-90)
+
+### Week 9: AI System Design Basics
+*   **Day 61: ML Pipeline Overview**. Data Collection -> Training -> Evaluation -> Deployment.
+*   **Day 62: Training vs Inference**. Batch prediction vs Online prediction.
+*   **Day 63: Model Serving Patterns**. Model-as-a-Service, Embedded model.
+*   **Day 64: Feature Stores**. What is it? (e.g., Tecton, Feast). Offline/Online skew.
+*   **Day 65: Monitoring ML**. Data Drift, Concept Drift, Model Decay.
+*   **Day 66: Evaluation Metrics**. Precision, Recall, F1, ROC-AUC.
+*   **Day 67: AI Design Case**. **Ad Click Prediction**. High QPS, Low Latency.
+
+### Week 10: Designing Recommender Systems
+*   **Day 68: Recommendation Basics**. Collaborative Filtering vs Content-Based.
+*   **Day 69: Two-Tower Architecture**. Candidate Generation -> Ranking -> Re-ranking.
+*   **Day 70: Embeddings & Vector DBs**. FAISS, Pinecone, Milvus. Approximate Nearest Neighbor (ANN).
+*   **Day 71: Design Case**. **News Feed (Facebook/Twitter)**.
+*   **Day 72: Design Case**. **Video Recommendation (TikTok/YouTube)**.
+*   **Day 73: Design Case**. **People You May Know (LinkedIn Graph)**.
+*   **Day 74: Review**. Deep dive into "Machine Learning System Design Interview" book resources.
+
+### Week 11: LLM & GenAI Systems (The Cutting Edge)
+*   **Day 75: LLM Basics for Systems**. Context window, Tokens, Temperature.
+*   **Day 76: RAG Architecture (Retrieval-Augmented Generation)**. Vector DB + LLM.
+*   **Day 77: Inference Optimization**. KV Caching, Quantization, Speculative Decoding.
+*   **Day 78: Design Case**. **ChatGPT-like Assistant**. History management, Streaming tokens.
+*   **Day 79: Design Case**. **Code Copilot**. Context awareness, Latency constraints.
+*   **Day 80: Agents & Tool Use**. ReAct pattern, LangChain concepts.
+*   **Day 81: AI Safety & Limits**. Rate limiting expensive models, Hallucination guardrails.
+
+### Week 12: Final Polish & Mock Interviews
+*   **Day 82: Mock Interview (LLD)**. Focus on clean code and patterns.
+*   **Day 83: Mock Interview (HLD - Standard)**. Focus on "Design Twitter".
+*   **Day 84: Mock Interview (HLD - AI)**. Focus on "Design a Recommender".
+*   **Day 85: Behavioral Prep**. STAR Method. "Tell me about a conflict."
+*   **Day 86: Resume Walkthrough**. Prepare deep technical explanations for your past projects.
+*   **Day 87: Failure Scenarios**. "What if the Leader crashes?" "What if the Region goes down?"
+*   **Day 88: Newsletter Catch-up**. Read the last 3 issues of ByteByteGo/Pragmatic Engineer.
+*   **Day 89: Rest & Light Review**. Visualizing systems with eyes closed.
+*   **Day 90: READY**. You are now a System Design expert.
+
+---
+
+## Daily Routine for Success
+1.  **Input (30m)**: Read 1 article or watch 1 video from the resources.
+2.  **Process (30m)**: Summarize the concept in your own words (Feynman technique).
+3.  **Output (1h)**: Solve a problem, draw a diagram, or write code.
+4.  **Recall (15m)**: Review Anki flashcards before bed.
