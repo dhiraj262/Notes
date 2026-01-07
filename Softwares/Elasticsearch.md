@@ -17,15 +17,15 @@ Elasticsearch is designed to be distributed and scalable from the ground up.
 ### 1. High-Level Topology
 ```mermaid
 graph TD
-    User[Client / Application] -->|HTTP REST| LB[Load Balancer]
+    User["Client / Application"] -->|HTTP REST| LB["Load Balancer"]
     LB --> Node1
     LB --> Node2
     LB --> Node3
 
     subgraph "Elasticsearch Cluster"
-        Node1[Node 1 <br> Master Eligible]
-        Node2[Node 2 <br> Data Node]
-        Node3[Node 3 <br> Data Node]
+        Node1["Node 1 <br> Master Eligible"]
+        Node2["Node 2 <br> Data Node"]
+        Node3["Node 3 <br> Data Node"]
 
         Node1 <--> Node2
         Node2 <--> Node3
@@ -45,17 +45,17 @@ An **Index** (logical namespace) is split into **Shards** (physical Lucene indic
 ```mermaid
 graph TD
     subgraph "Logical Index: Products"
-        P0[Shard 0 <br> Primary]
-        P1[Shard 1 <br> Primary]
+        P0["Shard 0 <br> Primary"]
+        P1["Shard 1 <br> Primary"]
     end
 
     subgraph "Physical Nodes"
-        NodeA[Node A]
-        NodeB[Node B]
+        NodeA["Node A"]
+        NodeB["Node B"]
     end
 
-    P0 -->|Replicates to| R0[Shard 0 <br> Replica]
-    P1 -->|Replicates to| R1[Shard 1 <br> Replica]
+    P0 -->|Replicates to| R0["Shard 0 <br> Replica"]
+    P1 -->|Replicates to| R1["Shard 1 <br> Replica"]
 
     NodeA --- P0
     NodeA --- R1
@@ -81,10 +81,10 @@ Unlike a relational database (which scans rows), ES uses an **Inverted Index** (
 ```mermaid
 graph LR
     subgraph "Inverted Index"
-        Term1(brown) --> List1[Doc 1]
-        Term2(blue) --> List2[Doc 2]
-        Term3(fox) --> List3[Doc 1, Doc 2]
-        Term4(quick) --> List4[Doc 1, Doc 2]
+        Term1("brown") --> List1["Doc 1"]
+        Term2("blue") --> List2["Doc 2"]
+        Term3("fox") --> List3["Doc 1, Doc 2"]
+        Term4("quick") --> List4["Doc 1, Doc 2"]
     end
 
     style Term1 fill:#f9f,stroke:#333
