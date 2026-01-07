@@ -23,33 +23,49 @@ graph TD
     LB --> Node3
 
     subgraph "Elasticsearch Cluster"
-        Node1[Node 1 (Master Eligible)]
-        Node2[Node 2 (Data Node)]
-        Node3[Node 3 (Data Node)]
+        Node1[Node 1 <br> Master Eligible]
+        Node2[Node 2 <br> Data Node]
+        Node3[Node 3 <br> Data Node]
 
-        Node1 --- Node2
-        Node2 --- Node3
-        Node3 --- Node1
+        Node1 <--> Node2
+        Node2 <--> Node3
+        Node3 <--> Node1
     end
+
+    style Node1 fill:#f9f,stroke:#333,stroke-width:2px
+    style Node2 fill:#bbf,stroke:#333,stroke-width:2px
+    style Node3 fill:#bbf,stroke:#333,stroke-width:2px
 ```
 
 ### 2. Data Organization (Shards & Replicas)
-An **Index** (like a Database) is split into **Shards**.
+An **Index** (logical namespace) is split into **Shards** (physical Lucene indices).
 *   **Primary Shard**: Where the write happens first.
 *   **Replica Shard**: Copy of primary for High Availability (HA) and Read scaling.
 
 ```mermaid
 graph TD
-    Index[Index: 'Products'] --> Shard0[Shard 0 (Primary)]
-    Index --> Shard1[Shard 1 (Primary)]
+    subgraph "Logical Index: Products"
+        P0[Shard 0 <br> Primary]
+        P1[Shard 1 <br> Primary]
+    end
 
-    Shard0 -.-> Replica0[Shard 0 (Replica)]
-    Shard1 -.-> Replica1[Shard 1 (Replica)]
+    subgraph "Physical Nodes"
+        NodeA[Node A]
+        NodeB[Node B]
+    end
 
-    style Shard0 fill:#f9f,stroke:#333
-    style Shard1 fill:#f9f,stroke:#333
-    style Replica0 fill:#bbf,stroke:#333
-    style Replica1 fill:#bbf,stroke:#333
+    P0 -->|Replicates to| R0[Shard 0 <br> Replica]
+    P1 -->|Replicates to| R1[Shard 1 <br> Replica]
+
+    NodeA --- P0
+    NodeA --- R1
+    NodeB --- P1
+    NodeB --- R0
+
+    style P0 fill:#ff9999,stroke:#333
+    style P1 fill:#ff9999,stroke:#333
+    style R0 fill:#99ff99,stroke:#333
+    style R1 fill:#99ff99,stroke:#333
 ```
 
 ---
@@ -61,14 +77,21 @@ Unlike a relational database (which scans rows), ES uses an **Inverted Index** (
 **Document 1**: "The quick brown fox"
 **Document 2**: "The quick blue fox"
 
-**Inverted Index**:
-| Term | Doc IDs |
-| :--- | :--- |
-| brown | [1] |
-| blue | [2] |
-| fox | [1, 2] |
-| quick | [1, 2] |
-| the | [1, 2] |
+### Visual Representation
+```mermaid
+graph LR
+    subgraph "Inverted Index"
+        Term1(brown) --> List1[Doc 1]
+        Term2(blue) --> List2[Doc 2]
+        Term3(fox) --> List3[Doc 1, Doc 2]
+        Term4(quick) --> List4[Doc 1, Doc 2]
+    end
+
+    style Term1 fill:#f9f,stroke:#333
+    style Term2 fill:#f9f,stroke:#333
+    style Term3 fill:#f9f,stroke:#333
+    style Term4 fill:#f9f,stroke:#333
+```
 
 *   **Search**: Query for "brown fox" -> Intersection of [1] and [1, 2] -> Result: Doc 1.
 *   **Speed**: O(1) or O(log N) lookup, regardless of dataset size.
