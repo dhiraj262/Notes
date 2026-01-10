@@ -1,6 +1,7 @@
 # 🔄 System Design Deep Dive: Consistent Hashing
 
-**Context**: An analysis of data partitioning strategies. Why `Modulo N` fails in dynamic environments and how Consistent Hashing with Virtual Nodes solves the "Re-hashing Storm".
+> **Context**: An analysis of data partitioning strategies. Why `Modulo N` fails in dynamic environments and how Consistent Hashing with Virtual Nodes solves the "Re-hashing Storm".
+
 ---
 
 ## 1. The Trap: "Just use Modulo N"
