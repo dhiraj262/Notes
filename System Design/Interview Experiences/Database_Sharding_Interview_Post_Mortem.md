@@ -1,6 +1,6 @@
-# 🛑 Interview Post-Mortem: "I Bombed Database Sharding"
+# 🧩 System Design Deep Dive: Database Sharding
 
-> **Context**: Sharding is the nuclear option for scaling. It solves write throughput but destroys query flexibility. Candidates often forget that "Joints across shards" are impossible (or extremely slow).
+> **Context**: The complexities of horizontal partitioning. Addressing the limitations of single-node databases and the trade-offs involved (Cross-Shard Joins, Scatter-Gather queries).
 
 ---
 
@@ -131,3 +131,5 @@ print(f"Total Orders: {len(all_items)}")
     *   *A: A separate table that maps a Non-Shard Key (e.g., Email) to the Shard Key (e.g., User ID) to allow efficient routing.*
 4.  **Q: Why avoid Auto-Increment IDs in sharding?**
     *   *A: IDs will collide across shards (Shard A has ID 1, Shard B has ID 1). Use Snowflake IDs (Global Uniqueness).*
+5.  **Q: What is "Directory Based Sharding"?**
+    *   *A: Using a lookup service to find the shard location. Flexible but adds a latency hop and a single point of failure (the lookup DB).*

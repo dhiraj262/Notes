@@ -1,7 +1,6 @@
-# 🛑 Interview Post-Mortem: "I Bombed Consistent Hashing"
+# 🔄 System Design Deep Dive: Consistent Hashing
 
-> **Context**: "Horizontal Scaling" is the standard answer to everything, but few candidates explain *how* data is assigned to servers. The default `Modulo N` approach is a death trap in production.
-
+**Context**: An analysis of data partitioning strategies. Why `Modulo N` fails in dynamic environments and how Consistent Hashing with Virtual Nodes solves the "Re-hashing Storm".
 ---
 
 ## 1. The Trap: "Just use Modulo N"
@@ -165,3 +164,5 @@ print(f"\nTotal Moved: {moved}/{len(users)}")
     *   *A: To ensure uniform distribution of keys (prevent data skew) and split the load of a dead node across multiple survivors.*
 4.  **Q: Does Consistent Hashing prevent Hot Spots (Hot Keys)?**
     *   *A: No. It balances data volume, not request volume. You need caching or replication for hot keys.*
+5.  **Q: What is the typical number of Virtual Nodes per Physical Node?**
+    *   *A: Often around 100-200. Higher numbers give better distribution but increase memory usage for the Ring metadata.*

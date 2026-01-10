@@ -1,6 +1,6 @@
-# 🛑 Interview Post-Mortem: "I Bombed Load Balancers"
+# ⚖️ System Design Deep Dive: Load Balancers (L4 vs L7)
 
-> **Context**: "Put a Load Balancer in front" is the reflex answer. But when asked "L4 or L7?" or "How do you handle Session State?", most candidates freeze.
+> **Context**: Understanding traffic distribution layers. Comparing Transport Layer (L4) performance vs Application Layer (L7) intelligence, and handling Session Affinity.
 
 ---
 
@@ -140,3 +140,5 @@ for i in range(10):
     *   *A: When an internal server tries to access another internal server via the public LB IP, and the router fails to route it back inside.*
 4.  **Q: How do you handle HTTPS at the LB level?**
     *   *A: SSL Termination. The LB decrypts the traffic (CPU heavy), inspects it, and sends unencrypted HTTP to the backend (in a trusted VPC).*
+5.  **Q: What is "Connection Draining"?**
+    *   *A: A process where the LB stops sending new requests to a server but allows existing connections to complete before taking the server offline.*

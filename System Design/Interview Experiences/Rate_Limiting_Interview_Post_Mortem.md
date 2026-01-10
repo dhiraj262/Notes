@@ -1,6 +1,6 @@
-# 🛑 Interview Post-Mortem: "I Bombed Rate Limiting"
+# 🛡️ System Design Deep Dive: Rate Limiting
 
-> **Context**: This is a breakdown of a common System Design interview failure mode: knowing the *algorithms* (Token Bucket, Leaky Bucket) but failing the *justification* (Magic Numbers) and *implementation details* (Concurrency).
+> **Context**: A detailed analysis of Rate Limiting strategies, focusing on capacity estimation ("Magic Numbers"), algorithm trade-offs, and handling distributed concurrency race conditions.
 
 ---
 
@@ -138,3 +138,5 @@ If you pass the coding part, they will grill you on "Hard Mode" scenarios.
     *   *A: To make multiple operations (Read -> Check -> Write) atomic and prevent race conditions.*
 4.  **Q: What is the complexity of Sliding Window Log?**
     *   *A: High memory usage O(N) where N is requests per window. Not suitable for high-throughput (DDoS protection).*
+5.  **Q: How does a Rate Limiter differ from a Load Balancer?**
+    *   *A: A Load Balancer distributes traffic to maximize capacity. A Rate Limiter restricts traffic to protect capacity (shedding load).*

@@ -1,6 +1,6 @@
-# 🛑 Interview Post-Mortem: "I Bombed Database Indexing"
+# 🗄️ System Design Deep Dive: Database Indexing (B-Tree vs LSM)
 
-> **Context**: Everyone knows "Add an Index". But Senior engineers must know *which* index (B-Tree vs LSM) and the cost of indexing (Write Amplification).
+> **Context**: Choosing the right storage engine. Comparing Read-Optimized B-Trees (SQL) with Write-Optimized LSM Trees (Cassandra/RocksDB) and understanding Write Amplification.
 
 ---
 
@@ -165,3 +165,5 @@ print(f"SSTables: {db.sstables}")
     *   *A: One logical write causes multiple physical writes (WAL + MemTable Flush + Compaction cycles).*
 4.  **Q: Does `SELECT * FROM table WHERE col LIKE '%term'` use an index?**
     *   *A: No. A leading wildcard (`%`) prevents using the B-Tree sort order.*
+5.  **Q: What is a Clustered Index?**
+    *   *A: The index determines the physical order of data on disk. A table can have only one Clustered Index (usually Primary Key).*

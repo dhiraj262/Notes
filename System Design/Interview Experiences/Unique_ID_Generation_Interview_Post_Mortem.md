@@ -1,6 +1,6 @@
-# 🛑 Interview Post-Mortem: "I Bombed Unique ID Generation"
+# 🆔 System Design Deep Dive: Unique ID Generation
 
-> **Context**: Generating IDs sounds trivial until you need to generate 100,000 per second across 50 servers without collisions and keep them sortable.
+> **Context**: Strategies for generating unique, sortable IDs in distributed systems. Comparing Auto-Increment, UUID, and the Twitter Snowflake algorithm.
 
 ---
 
@@ -150,3 +150,5 @@ print(f"Generated ID: {generator.next_id()}")
     *   *A: The generator must pause or throw an exception to prevent generating a duplicate ID.*
 4.  **Q: How long until the 41-bit timestamp overflows?**
     *   *A: Approx 69 years from the custom epoch.*
+5.  **Q: Why do we need a custom Epoch?**
+    *   *A: To maximize the lifespan of the 41-bit timestamp. If we used the standard Unix Epoch (1970), we would have wasted 50+ years of value.*

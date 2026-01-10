@@ -1,6 +1,6 @@
-# 🛑 Interview Post-Mortem: "I Bombed Distributed Transactions"
+# 🤝 System Design Deep Dive: Distributed Transactions
 
-> **Context**: "Microservices" is the buzzword, but nobody asks how you keep data consistent across them until the Senior rounds. The default "2PC" answer is a trap.
+> **Context**: Ensuring data consistency across Microservices. Why Two-Phase Commit (2PC) hurts availability and how the Saga Pattern (Orchestration) solves it using Compensating Transactions.
 
 ---
 
@@ -154,3 +154,5 @@ saga.run()
     *   *A: Massive alert. Human intervention required. Retry indefinitely until success (Compensations must be safe/idempotent).*
 4.  **Q: Does Saga guarantee ACID?**
     *   *A: No. It guarantees ACD (Atomicity via compensation, Consistency, Durability), but Isolation is sacrificed (Eventual Consistency).*
+5.  **Q: What is a "Pivot Transaction" in a Saga?**
+    *   *A: The step that, once successful, ensures the entire saga will complete. Steps before it are compensatable; steps after it must succeed (retryable).*
