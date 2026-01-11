@@ -84,7 +84,38 @@ Large financial firms use skills to enforce **"Policy-as-Code"**.
     *   **Agent Skills**: Modular, dynamic context (loaded on demand).
     *   **MCP (Model Context Protocol)**: The *tools* the agent uses. Skills often *orchestrate* MCP tools.
 
-## 7. Deep Dive: Skills vs. MCP
+## 7. Deep Dive: Technical Specification & Architecture
+
+### 7.1 The `SKILL.md` Standard
+The core of an Agent Skill is the `SKILL.md` file, which uses YAML frontmatter for metadata and Markdown for instructions.
+
+**Directory Structure:**
+```text
+skill-name/
+├── SKILL.md          # Required: Entry point
+├── scripts/          # Optional: Executable code (Python, Bash)
+├── references/       # Optional: Static docs (tables, policies)
+└── assets/           # Optional: Templates, images
+```
+
+**Frontmatter Specification:**
+The YAML header defines how the agent discovers the skill.
+```yaml
+---
+name: pdf-processing        # [a-z0-9-], max 64 chars
+description: Extract text... # Max 1024 chars. Critical for discovery.
+compatibility: Claude Code   # Optional: Environment requirements
+allowed-tools: bash(jq)      # Experimental: Pre-approved tools
+---
+```
+
+### 7.2 Progressive Disclosure Mechanics
+To optimize context window usage, skills load in three phases:
+1.  **Discovery (~100 tokens)**: Agent only sees `name` and `description` from the frontmatter.
+2.  **Activation (< 5000 tokens)**: If selected, the full `SKILL.md` body is loaded.
+3.  **Execution (Variable)**: If the skill references files in `scripts/` or `references/`, those are read only when specifically requested.
+
+### 7.3 Distinction from MCP
 It is crucial to distinguish **Skills** (Process) from **MCP** (Capability).
 
 | Feature | Agent Skill (`SKILL.md`) | MCP Server (Tool) |
