@@ -1,143 +1,124 @@
 import re
 import sys
 import io
-from typing import Dict, Any, Callable
+import contextlib
 
-# --- 1. Mock Tools ---
-def get_weather(city: str) -> int:
-    """Mock tool to get weather (returns integer F)."""
-    print(f"    [System] Tool 'get_weather' called for {city}...")
-    if "New York" in city:
-        return 75
-    return 0
-
-# --- 2. Mock LLM ---
 class MockLLM:
     """
-    Simulates an LLM that knows how to write Python code for specific prompts.
+    Simulates an LLM that is trained to write Python code to solve problems.
     In a real scenario, this would call an API like OpenAI or Anthropic.
     """
     def generate(self, prompt: str) -> str:
-        # Simple rule-based logic to simulate 'intelligence' for this demo
-
-        # Step 3: Agent sees the Celsius value and concludes
-        if "The temperature in Celsius is 23.89" in prompt:
-            return "Final Answer: The temperature in New York is roughly 23.89 degrees Celsius."
-
-        # Step 2: Agent sees the Observation (75) and needs to convert
-        elif "Current temperature in F: 75" in prompt:
-             return """
-The weather is 75F. Now I will convert this value to Celsius using the formula (F - 32) * 5/9.
-
-```python
-# Step 2: Convert to Celsius
-fahrenheit = 75
-celsius = (fahrenheit - 32) * 5/9
-print(f"The temperature in Celsius is {celsius:.2f}")
-```
-"""
-
-        # Step 1: User asks for weather (and we haven't started yet)
-        elif "weather in New York" in prompt:
+        # Heuristic response generation for the simulation
+        if "fibonacci" in prompt.lower():
             return """
-I need to check the weather in New York first. I will use the `get_weather` tool.
-Then I will convert it to Celsius.
+I will solve this by writing a Python script.
 
 ```python
-# Step 1: Get the weather
-fahrenheit = get_weather("New York")
-print(f"Current temperature in F: {fahrenheit}")
+def fibonacci(n):
+    if n <= 1:
+        return n
+    else:
+        return fibonacci(n-1) + fibonacci(n-2)
+
+# Calculate 10th fibonacci number
+# 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55 (if 0 is 0th)
+# Let's assume standard F(10) = 55
+fib_10 = fibonacci(10)
+
+# Multiply by 2 as requested
+result = fib_10 * 2
+
+print(f"The 10th Fibonacci number multiplied by 2 is: {result}")
+final_answer = result
 ```
 """
+        elif "search" in prompt.lower():
+            return """
+I will use the search tool to find the answer.
 
-        else:
-            return "I am not sure what to do. Final Answer: Unknown."
+```python
+# Search for the query
+search_result = search_tool("current python version")
+print(f"Search found: {search_result}")
+final_answer = search_result
+```
+"""
+        return "I don't know how to solve this."
 
-# --- 3. Code Agent ---
 class CodeAgent:
-    def __init__(self, tools: Dict[str, Callable], llm: MockLLM):
-        self.tools = tools
+    """
+    A simplified version of the SmolAgents CodeAgent.
+    It takes an LLM and a set of tools, and executes the generated code.
+    """
+    def __init__(self, llm, tools=None):
         self.llm = llm
-        self.history = ""
-        # Persistent scope for the agent's session (optional, but good for multi-turn)
-        self.session_locals = {}
+        self.tools = tools if tools else {}
+        self.local_scope = {**self.tools} # Inject tools into the scope
 
     def run(self, task: str):
-        print(f"--- Starting Task: {task} ---")
-        self.history += f"Task: {task}\n"
+        print(f"🤖 Agent received task: {task}")
 
-        max_turns = 3
-        for i in range(max_turns):
-            print(f"\n--- Turn {i+1} ---")
+        # 1. Generate Code
+        response = self.llm.generate(task)
+        print(f"📝 LLM Generated Response:\n{'-'*20}\n{response}\n{'-'*20}")
 
-            # 1. Generate Thought & Action
-            response = self.llm.generate(self.history)
-            print(f"[Agent]: {response}")
-            self.history += response + "\n"
+        # 2. Extract Code
+        code = self._extract_code(response)
+        if not code:
+            print("❌ No code block found in response.")
+            return None
 
-            # 2. Check for Code
-            code_match = re.search(r"```python(.*?)```", response, re.DOTALL)
-            if not code_match:
-                if "Final Answer" in response:
-                    print("\n--- Task Complete ---")
-                    return
-                print("[System] No code found in response.")
-                break
+        print(f"💻 Extracted Code:\n{'-'*20}\n{code}\n{'-'*20}")
 
-            code = code_match.group(1).strip()
-
-            # 3. Execute Code
-            print(f"[System] Executing Code Block...")
-            output = self.execute_code(code)
-            print(f"[System] Output: {output}")
-
-            # 4. Update History with Observation
-            self.history += f"Observation: {output}\n"
-
-    def execute_code(self, code: str) -> str:
-        """
-        Executes the provided Python code in a controlled environment.
-        Captures stdout as the 'Observation'.
-        """
-        # Capture stdout
-        old_stdout = sys.stdout
-        redirected_output = io.StringIO()
-        sys.stdout = redirected_output
-
-        # Prepare execution environment
-        # We pass the tools as globals so the code can call them.
-        # We use a persistent locals dict if we want variables to survive between turns (CodeAct style)
-        # But for this simple mock, per-block execution with shared tools is sufficient.
-
-        global_scope = self.tools.copy()
-        # Add 'print' to globals if needed, though it's built-in.
-
+        # 3. Execute Code in Sandbox (Simulated)
+        print("⚙️ Executing code in sandbox...")
         try:
-            # We use the same dict for globals and locals to allow functions to see themselves
-            # and to simplify scope, similar to how REPLs often work.
-            exec(code, global_scope, global_scope)
-            result = redirected_output.getvalue().strip()
-            if not result:
-                result = "(No output)"
+            # Capture stdout
+            output_capture = io.StringIO()
+            with contextlib.redirect_stdout(output_capture):
+                # Execute in the local_scope
+                # Note: In a real agent, this would be a secure container (E2B/Docker)
+                # 'final_answer' is a convention to extract the result
+                # We use local_scope for both globals and locals to support recursion/function lookup
+                exec(code, self.local_scope, self.local_scope)
+
+            output = output_capture.getvalue()
+            print(f"📤 Execution Output:\n{output}")
+
+            # Check for a 'final_answer' variable which is a common pattern
+            result = self.local_scope.get('final_answer')
+            print(f"✅ Final Result: {result}")
+            return result
+
         except Exception as e:
-            result = f"Error during execution: {e}"
-        finally:
-            sys.stdout = old_stdout
+            print(f"❌ Execution Error: {e}")
+            return None
 
-        return result
+    def _extract_code(self, response: str) -> str:
+        # Regex to find code inside ```python ... ``` blocks
+        match = re.search(r"```python(.*?)```", response, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return None
 
-# --- 4. Main Execution ---
+# --- Mock Tools ---
+def search_tool(query):
+    return f"Results for '{query}': Python 3.12 is the latest stable version."
+
+# --- Main Simulation ---
 if __name__ == "__main__":
-    print("Initializing Smolagents Simulation (Code Agents)...")
+    print("🚀 Starting SmolAgents Simulation (Code Agent Pattern)\n")
 
-    # Define available tools
-    tools = {
-        "get_weather": get_weather
-    }
+    # Initialize
+    llm = MockLLM()
+    tools = {"search_tool": search_tool}
+    agent = CodeAgent(llm, tools)
 
-    # Initialize components
-    mock_llm = MockLLM()
-    agent = CodeAgent(tools, mock_llm)
+    # Test Case 1: Computation
+    print("\n--- Test Case 1: Pure Computation ---")
+    agent.run("Calculate the 10th fibonacci number and multiply it by 2.")
 
-    # Run a task
-    agent.run("What is the weather in New York in Celsius?")
+    # Test Case 2: Tool Use
+    print("\n--- Test Case 2: Tool Usage ---")
+    agent.run("Search for the current python version.")
