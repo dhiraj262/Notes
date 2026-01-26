@@ -1,149 +1,142 @@
 # Day 49: Design Youtube/Netflix
 
 ## 🎯 Goal
-Design a global video sharing and streaming platform like YouTube or Netflix.
-**Focus**: Upload flow, Transcoding (DAG model), Adaptive Bitrate Streaming, and CDN distribution.
+Design a video streaming platform.
+**Focus**: Large Object Storage, Transcoding (DAG), CDN, and Adaptive Bitrate Streaming.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Upload**: Users upload video files (MP4, MKV).
-2.  **Streaming**: Users watch videos buffer-free.
+1.  **Upload**: Users upload raw video.
+2.  **View**: Users stream video (no buffering).
 3.  **Search**: Find videos by title.
-4.  **Recommendations**: "Up Next".
+4.  **Analytics**: View count, watch time.
 
 ### Non-Functional
-1.  **High Availability**: Videos always playable.
-2.  **Low Latency**: Fast start time.
-3.  **Scalability**: Handle popular viral videos.
+1.  **Reliability**: Uploads must not fail midway.
+2.  **Availability**: Playback must always work (CDN).
+3.  **Scalability**: Handle popular videos (Justin Bieber case).
 
 ---
 
 ## 📐 Capacity Estimation
-*   **DAU**: 100 Million.
-*   **Uploads**: 1 video/user/month -> 3M uploads/day.
-*   **Storage**: 3M * 500MB = 1.5 PB/day. (Massive storage).
-*   **Bandwidth**: Streaming dominates cost. CDN is mandatory.
+*   **DAU**: 1 Billion Users.
+*   **Uploads**: 500 hours of video / minute.
+*   **Storage**: 1 min video = 50MB (HQ).
+    *   Daily: 500 * 60 * 24 * 50MB = 36 PB / day? (Needs heavy compression/dedup, or numbers are for raw).
+*   **Bandwidth**: Main cost driver.
 
 ---
 
 ## 🧠 Core Design Decisions
 
 ### 1. Adaptive Bitrate Streaming (ABS)
-*   **Problem**: Users have different internet speeds (3G vs 5G vs Fiber).
-*   **Solution**: Create multiple versions of the same video (360p, 720p, 1080p, 4K).
-*   **Protocol**: HLS (HTTP Live Streaming) or DASH.
-*   Video is broken into small "chunks" (ts files). Player switches quality based on bandwidth.
+*   **Problem**: User on 3G cannot stream 4K.
+*   **Solution**: **MPEG-DASH / HLS (Apple)**.
+    *   Break video into 4-second chunks.
+    *   Encode each chunk in multiple bitrates (360p, 720p, 1080p).
+    *   Player detects bandwidth and requests appropriate chunk `video_1080p_001.ts`.
 
 ### 2. Transcoding Pipeline (DAG)
-*   Video processing is heavy. Can't be monolithic.
-*   **DAG (Directed Acyclic Graph)**:
-    *   Step 1: Check metadata.
-    *   Step 2: Split into chunks.
-    *   Step 3: Transcode chunks in parallel (Audio, Video 360p, Video 720p).
-    *   Step 4: Merge/Manifest generation.
+*   Raw video is huge. Must convert to mp4/webm + different resolutions.
+*   Use a **DAG (Directed Acyclic Graph)** model.
+    *   Split video -> Process Audio -> Process Video (Parallel) -> Merge.
 
-### 3. Content Delivery Network (CDN)
-*   Serve video from the edge server closest to the user.
-*   **Caching Policy**:
-    *   **Hot Videos**: Cache in all Edge locations.
-    *   **Cold Videos**: Fetch from Origin (S3) on demand.
+### 3. CDN (Content Delivery Network)
+*   Store popular videos in Edge Servers (ISP Data Centers).
+*   **Long-tail videos** stay in S3 (Origin).
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Upload Service**: Pre-signed URL to S3 (Direct upload).
-2.  **S3 (Original Storage)**: Stores raw video.
-3.  **Transcoding Service**:
-    *   Triggered by upload.
-    *   Breaks video into chunks.
-    *   Converts to HLS/DASH formats.
-    *   Saves processed chunks to S3.
-4.  **CDN**: Pulls processed chunks from S3 and caches them globally.
-5.  **Client**: Downloads "Manifest file" (.m3u8), then requests chunks from CDN.
+1.  **Upload Service**:
+    *   Presigned URL to S3 (Direct upload).
+2.  **Transcoding Cluster**:
+    *   Workers pick up "New Upload" event.
+    *   Run ffmpeg jobs.
+    *   Store artifacts in S3 + CDN.
+3.  **Metadata DB**:
+    *   MySQL/Postgres (Sharded). Stores `VideoID`, `Title`, `UploaderID`.
+4.  **Streaming Service**:
+    *   Returns the **Manifest File** (`.m3u8` or `.mpd`) listing chunk URLs.
 
 ---
 
-## 💻 Code Simulation: Transcoding Job
+## 💻 Code Simulation: Transcoding Mock
 
-Simulating the breaking down of a video job into parallel tasks.
+Simulating the workflow of converting raw video into multiple formats.
 
 ```python
 import time
-import concurrent.futures
 
 class VideoTranscoder:
     def __init__(self):
-        self.resolutions = ["360p", "720p", "1080p"]
+        self.queue = []
 
-    def process_video(self, video_id):
-        print(f"🎬 Received Video {video_id}. Starting Pipeline...")
+    def upload(self, video_id, raw_file):
+        print(f"⬆️ Uploaded {video_id} ({len(raw_file)} bytes).")
+        self.queue.append(video_id)
+        self.process_queue()
 
-        # Step 1: Validation
-        self.validate(video_id)
+    def process_queue(self):
+        while self.queue:
+            vid = self.queue.pop(0)
+            self.transcode(vid)
 
-        # Step 2: Parallel Transcoding
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(self.transcode_chunk, video_id, res) for res in self.resolutions]
-            for f in concurrent.futures.as_completed(futures):
-                print(f"   ✅ {f.result()}")
+    def transcode(self, video_id):
+        print(f"🎬 Processing {video_id}...")
+        resolutions = ["1080p", "720p", "480p"]
+        formats = ["mp4", "webm"]
 
-        # Step 3: Manifest Generation
-        self.generate_manifest(video_id)
-        print(f"🎉 Video {video_id} Ready for Streaming!")
+        # Simulating DAG (Directed Acyclic Graph) of tasks
+        for res in resolutions:
+            for fmt in formats:
+                self.convert_chunk(video_id, res, fmt)
 
-    def validate(self, vid):
-        print("   🔍 Validating format... OK.")
-        time.sleep(0.5)
+        print(f"✅ {video_id} Ready for streaming.\n")
 
-    def transcode_chunk(self, vid, res):
-        time.sleep(1) # Simulate heavy work
-        return f"Chunk {res} Transcoded"
-
-    def generate_manifest(self, vid):
-        print("   📄 Generating HLS Manifest (.m3u8)...")
+    def convert_chunk(self, vid, res, fmt):
+        # Simulation of heavy compute
+        print(f"   ⚙️ Converting chunk -> {res} / {fmt}")
 
 if __name__ == "__main__":
     youtube = VideoTranscoder()
-    youtube.process_video("vid_101")
+    youtube.upload("Video_A", b"raw_data_1GB")
+    youtube.upload("Video_B", b"raw_data_500MB")
 ```
 
 **Output:**
 ```
-🎬 Received Video vid_101. Starting Pipeline...
-   🔍 Validating format... OK.
-   ✅ Chunk 720p Transcoded
-   ✅ Chunk 360p Transcoded
-   ✅ Chunk 1080p Transcoded
-   📄 Generating HLS Manifest (.m3u8)...
-🎉 Video vid_101 Ready for Streaming!
+⬆️ Uploaded Video_A (12 bytes).
+🎬 Processing Video_A...
+   ⚙️ Converting chunk -> 1080p / mp4
+   ...
+✅ Video_A Ready for streaming.
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. Safety & Copyright?
-*   Compute hash of uploaded video. Check against "Copyright Database" (Content ID).
-*   AI Model to detect NSFW content during the validation step.
+### 1. How to optimize storage?
+*   **Deduplication**: If 100 people upload the same movie, store once.
+*   **Cold Storage**: Move videos with 0 views in 1 year to Glacier.
 
-### 2. Optimizing Storage?
-*   Use different compression algorithms.
-*   **Cold Storage**: Move videos with 0 views in 1 year to Amazon Glacier (Cheaper, slower access).
+### 2. Encryption (DRM)?
+*   **Widevine / FairPlay**. Encrypt chunks. Player gets key from license server.
 
-### 3. How to handle "Viral" spikes?
-*   The CDN handles the read traffic. The challenge is the "Thundering Herd" on the cache miss.
-*   **Request Collapsing**: If 10,000 users ask for `chunk_1.ts` and it's not in cache, CDN should send **only one** request to Origin, then serve all 10,000.
+### 3. Thumbnails?
+*   Generate Sprite Sheet (Big image with many small thumbnails) to reduce HTTP requests when scrubbing the seek bar.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is Adaptive Bitrate Streaming?**
-    *   A technique where video quality dynamically adjusts based on the user's real-time network speed (e.g., dropping from 1080p to 480p if bandwidth drops).
-2.  **Why use Pre-signed URLs for upload?**
-    *   To allow the client to upload directly to S3 (Object Storage) without burdening the application servers with heavy file data.
-3.  **What is a CDN Edge Server?**
-    *   A server geographically close to the user that caches static content (images, video chunks) to reduce latency and load on the origin server.
+1.  **What is a Manifest File (M3U8)?**
+    *   A text file that acts as a playlist, telling the player where to find the chunks for different bitrates.
+2.  **Presigned URL?**
+    *   A way to let a user upload directly to S3 without the data passing through your API server (saving bandwidth).
+3.  **Why use UDP (QUIC) for streaming?**
+    *   TCP retransmission causes buffering (Head-of-Line blocking). QUIC/UDP is faster for real-time.

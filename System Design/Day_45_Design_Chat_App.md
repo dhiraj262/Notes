@@ -1,172 +1,181 @@
-# Day 45: Design a Chat App (WhatsApp)
+# Day 45: Design a Chat App (WhatsApp/Telegram)
 
 ## 🎯 Goal
-Design a real-time messaging application like WhatsApp or Facebook Messenger.
-**Focus**: Real-time delivery, Message storage (High Write Throughput), and User Status (Online/Offline).
+Design a real-time messaging system like WhatsApp, Facebook Messenger, or WeChat.
+**Focus**: Real-time delivery (WebSockets), Scale (Billions of msgs), and Status (Online/Offline).
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **One-on-One Chat**: Send text, images, and videos.
-2.  **Group Chat**: Support groups with up to 256 members.
-3.  **Delivery Status**: Sent, Delivered, Read receipts.
-4.  **Online Status**: Show "Last seen" or "Online".
-5.  **Multi-Device Support**: Sync messages across phone and web.
+1.  **1-on-1 Chat**: Low latency delivery.
+2.  **Group Chat**: Support groups of up to 256 members.
+3.  **Online Status**: Show if a user is Online/Offline/Typing.
+4.  **Media Support**: Images, Videos (Not focused on deep storage details here, but the mechanism).
+5.  **Multi-Device**: Sync across Phone and Web.
 
 ### Non-Functional
-1.  **Low Latency**: Real-time delivery (< 500ms).
-2.  **High Availability**: 99.99% uptime.
-3.  **Consistency**: Messages must be ordered (mostly).
-4.  **Security**: End-to-End Encryption (E2EE).
+1.  **Low Latency**: Messages must feel instant (< 100ms).
+2.  **Consistency**: Messages must be ordered correctly.
+3.  **Availability**: High availability for sending messages (CAP -> AP usually, but Consistency matters for chat history).
+4.  **Encryption**: End-to-End (E2EE) - though we focus on system architecture first.
 
 ---
 
 ## 📐 Capacity Estimation
-*   **DAU**: 50 Million.
-*   **Msgs/User**: 20/day.
-*   **Total Messages**: 1 Billion/day.
-*   **Storage**: 1B * 100 Bytes = 100 GB/day -> 36 TB/year. (Need a scalable DB).
-*   **Bandwidth**: If 10% are images (1MB), immense bandwidth requirements.
+*   **DAU**: 500 Million Users.
+*   **Msgs/User**: 40 daily.
+*   **Total Messages**: 20 Billion / day.
+*   **Storage**: Assuming 100 bytes/msg -> 2TB / day. (Need heavy archival strategy).
+*   **Peak Traffic**: 20B / 86400 ≈ 230k msg/sec.
+*   **WebSockets**: 500M concurrent connections (Need massive server fleet).
 
 ---
 
 ## 🧠 Core Design Decisions
 
-### 1. Protocol: HTTP vs WebSockets
-*   **HTTP (Pull)**: Client polls server every second. Inefficient, high server load.
-*   **WebSockets (Push)**: Persistent bidirectional connection. Server pushes message to client immediately.
-*   **Decision**: **WebSockets** for chat. HTTP for metadata (profile update, group creation).
+### 1. HTTP vs WebSockets
+*   **HTTP (Polling)**: "Are there new messages?" -> Inefficient, high latency, server load.
+*   **Long Polling**: Better, but still overhead.
+*   **WebSockets**: Bi-directional, persistent connection. Best for Chat.
+    *   *Decision*: Use **WebSockets** for message delivery.
 
-### 2. Database: SQL vs NoSQL
-*   **Pattern**: Extremely high write throughput (1B/day). Users mostly fetch recent history.
-*   **SQL (MySQL/Postgres)**: Hard to scale writes for billions of rows without complex sharding.
-*   **NoSQL (Cassandra/HBase)**:
-    *   **Cassandra**: Optimized for heavy writes (LSM Trees).
-    *   **Data Model**: Partition by `chat_id`, sort by `timestamp`.
-*   **Decision**: **Cassandra** or **HBase**.
+### 2. Database Choice (Read/Write Heavy)
+*   **SQL (MySQL/Postgres)**: Good for relations, but scaling writes for 20B/day is hard. Indexing becomes slow.
+*   **NoSQL (Cassandra/HBase)**: Excellent for heavy writes.
+    *   *Decision*: **Cassandra/HBase** (Wide-Column Store) or **DynamoDB**.
+    *   *Schema*: Partition Key = `chat_id` (or `user_id` for inbox), Sort Key = `timestamp`.
 
-### 3. Last Seen / Presence
-*   Do not update DB on every heartbeat.
-*   Use a **Heartbeat Service** with Redis.
-*   Client sends heartbeat every 5s. Redis Key `user:123:status` -> `timestamp`.
-*   If timestamp > 10s ago, user is Offline.
+### 3. Message Synchronization
+*   How to handle offline users?
+*   Use a temporary **Inbox** storage (Redis/Kafka) until user reconnects, then sync to DB.
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Chat Service (WebSocket Server)**: Maintains open connections with active users.
-    *   Map: `User_ID -> Connection_Object`.
-2.  **Message Router**:
-    *   User A sends msg to User B.
-    *   Router checks which Chat Server holds User B's connection.
-    *   Routes message there.
-3.  **Cassandra**: Stores message history permanently.
-4.  **Redis**: Stores "Presence" (Online/Offline status).
-5.  **Push Notification Service**: If User B is offline (no WebSocket connection), send via FCM/APNS.
+1.  **Chat Server (WebSocket Gateway)**:
+    *   Maintains persistent WS connections with users.
+    *   Stateful service (Needs sticky sessions or a distributed session manager).
+2.  **Service Discovery (Zookeeper/Etcd)**:
+    *   Tracks which Chat Server holds User A's connection.
+    *   Map: `User_A` -> `Server_IP_1`.
+3.  **Message Service (API)**:
+    *   Receives message from sender's Chat Server.
+    *   Writes to **Cassandra**.
+    *   Finds receiver's Chat Server (via Redis/Service Discovery) and pushes content.
+4.  **Group Chat Service**:
+    *   Fan-out service. If A sends to Group G (Members A, B, C):
+    *   Lookup members of G.
+    *   Push to B's Chat Server and C's Chat Server.
+5.  **Presence Service**:
+    *   Heartbeat mechanism.
+    *   User sends heartbeat every 5s.
+    *   Update Status in Redis with TTL = 10s.
 
 ---
 
-## 💻 Code Simulation: Message Router
+## 💻 Code Simulation: Message Routing
 
-Simulating the logic of routing a message to a connected user or falling back to DB/Push if offline.
+Simulating the core logic of a Chat Server handling connections and offline queuing.
 
 ```python
 import time
 
-class ChatSystem:
+class ChatServer:
     def __init__(self):
-        # Maps user_id -> socket_connection (Mock)
-        self.active_sessions = {}
-        # Mock DB
-        self.message_store = []
-        # Mock Push Service
-        self.offline_queue = []
+        # Mocking active WebSocket connections: user_id -> connection_object
+        self.active_connections = {}
+        # Mocking Database: user_id -> list of messages
+        self.message_store = {}
+        # Offline Queue (for push notifications later, simplified here)
+        self.offline_queue = {}
 
     def connect(self, user_id):
-        print(f"🔌 User {user_id} connected via WebSocket.")
-        self.active_sessions[user_id] = f"SocketConnection_{user_id}"
+        print(f"🔌 User {user_id} connected.")
+        self.active_connections[user_id] = True
+        # Deliver offline messages
+        if user_id in self.offline_queue:
+            msgs = self.offline_queue.pop(user_id)
+            for msg in msgs:
+                print(f"   📨 [Deferred Delivery] To {user_id}: {msg}")
 
     def disconnect(self, user_id):
-        if user_id in self.active_sessions:
-            print(f"🔌 User {user_id} disconnected.")
-            del self.active_sessions[user_id]
+        print(f"❌ User {user_id} disconnected.")
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
 
-    def send_message(self, sender, receiver, content):
+    def send_message(self, sender_id, receiver_id, content):
         timestamp = time.time()
-        msg = {"from": sender, "to": receiver, "content": content, "ts": timestamp}
+        msg_obj = {"from": sender_id, "content": content, "ts": timestamp}
 
-        # 1. Persist to DB (Always)
-        self.message_store.append(msg)
-        print(f"💾 Saved to DB: {content}")
+        # 1. Persist Message (Write-ahead)
+        if receiver_id not in self.message_store:
+            self.message_store[receiver_id] = []
+        self.message_store[receiver_id].append(msg_obj)
+        print(f"💾 DB: Saved message from {sender_id} to {receiver_id}")
 
-        # 2. Attempt Real-time Delivery
-        if receiver in self.active_sessions:
-            conn = self.active_sessions[receiver]
-            self._deliver_via_socket(conn, msg)
+        # 2. Try to deliver via WebSocket
+        if receiver_id in self.active_connections:
+            print(f"   🚀 [WebSocket] Pushed to {receiver_id}: {content}")
         else:
-            # 3. Fallback to Push Notification
-            self.offline_queue.append(msg)
-            print(f"💤 User {receiver} offline. Pushed to Notification Service.")
-
-    def _deliver_via_socket(self, conn, msg):
-        print(f"🚀 Delivered to {msg['to']} via {conn}: {msg['content']}")
+            print(f"   💤 User {receiver_id} offline. Queued.")
+            if receiver_id not in self.offline_queue:
+                self.offline_queue[receiver_id] = []
+            self.offline_queue[receiver_id].append(msg_obj)
 
 if __name__ == "__main__":
-    chat = ChatSystem()
+    chat = ChatServer()
 
-    # Users come online
+    # User A connects
     chat.connect("Alice")
+
+    # Alice sends to Bob (Offline)
+    chat.send_message("Alice", "Bob", "Hi Bob! Are you there?")
+
+    # Bob connects
     chat.connect("Bob")
 
-    # Alice chats with Bob (Online)
-    chat.send_message("Alice", "Bob", "Hello Bob!")
-
-    # Bob goes offline
-    chat.disconnect("Bob")
-
-    # Alice sends another message
-    chat.send_message("Alice", "Bob", "Are you there?")
+    # Bob replies
+    chat.send_message("Bob", "Alice", "Hey Alice! I'm here now.")
 ```
 
 **Output:**
 ```
-🔌 User Alice connected via WebSocket.
-🔌 User Bob connected via WebSocket.
-💾 Saved to DB: Hello Bob!
-🚀 Delivered to Bob via SocketConnection_Bob: Hello Bob!
-🔌 User Bob disconnected.
-💾 Saved to DB: Are you there?
-💤 User Bob offline. Pushed to Notification Service.
+🔌 User Alice connected.
+💾 DB: Saved message from Alice to Bob
+   💤 User Bob offline. Queued.
+🔌 User Bob connected.
+   📨 [Deferred Delivery] To Bob: {'from': 'Alice', 'content': 'Hi Bob! Are you there?', 'ts': ...}
+💾 DB: Saved message from Bob to Alice
+   🚀 [WebSocket] Pushed to Alice: Hey Alice! I'm here now.
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. Group Chat Complexity?
-*   **Fan-out**: If A sends a message to a group of 500 people, the server needs to duplicate that message 500 times.
-*   **Optimization**:
-    *   **Small Group**: Loop and send.
-    *   **Mega Group (10k users)**: Don't push. Let clients pull/poll (Hybrid approach) or use Pub/Sub topics efficiently.
+### 1. How to handle Group Chats?
+*   **Small Groups (WhatsApp)**: Client-side fanout or Server-side "light" fanout. Messages are stored per user inbox.
+*   **Mega Groups (Discord/Slack)**: Store message once in "Channel" Timeline. Users pull from channel timeline. Fanout on write is too expensive for 100k users.
 
-### 2. Media Handling?
-*   Don't send images via WebSocket.
-*   Upload Image to **S3** -> Get URL -> Send URL via WebSocket.
+### 2. How to ensure message ordering?
+*   Use a **Sequence Number** or **Timestamp** generator (Snowflake ID) at the server side.
+*   Client re-sorts messages based on ID if they arrive out of order.
 
-### 3. End-to-End Encryption (E2EE)?
-*   Server does not store plain text.
-*   Public Key Cryptography. Alice encrypts with Bob's Public Key. Only Bob's Private Key can decrypt.
-*   Server just relays the encrypted blob.
+### 3. Last Seen / Online Status?
+*   Do not write to DB every second.
+*   Use **Redis** with TTL.
+*   `SET user:123:status "Online" EX 10`
+*   If heartbeat stops, key expires -> User is Offline.
 
 ---
 
 ## ⚡ Flashcards
-1.  **Why Cassandra for Chat?**
-    *   Excellent write performance (LSM trees) and easy horizontal scaling/partitioning by `chat_id`.
-2.  **WebSocket vs HTTP Long Polling?**
-    *   WebSockets provide true full-duplex communication with lower overhead than holding an HTTP connection open.
-3.  **How to handle "Read Receipts"?**
-    *   When User B opens the chat, client sends an ACK. Server updates the message status in DB and pushes status update to User A.
+1.  **WebSocket vs HTTP Long Polling?**
+    *   WebSocket is full-duplex (2-way), lower overhead. Long polling opens/closes connections repeatedly.
+2.  **Why Cassandra for Chat?**
+    *   Extremely high write throughput, good for time-series data (Chat History), linear scalability.
+3.  **What is the "Fan-out" problem in Group Chat?**
+    *   Sending 1 message to a group of 1M users means generating 1M distinct writes/notifications, causing a storm.
