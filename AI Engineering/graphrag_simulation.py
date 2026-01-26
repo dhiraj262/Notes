@@ -1,170 +1,203 @@
-import re
-import collections
+import json
+import random
+import math
+from typing import List, Dict, Set, Tuple, Any
 
-class SimpleGraphRAG:
-    """
-    A simplified simulation of the GraphRAG pipeline using standard Python.
-    Demonstrates:
-    1. Entity Extraction (Mocked)
-    2. Graph Construction
-    3. Community Detection (Connected Components)
-    4. Community Summarization
-    5. Global Search
-    """
+# ==============================================================================
+# GraphRAG Simulation
+# ==============================================================================
+# This script simulates the core mechanics of "GraphRAG" (Retrieval Augmented Generation with Graphs).
+#
+# CORE CONCEPTS SIMULATED:
+# 1. Entity & Relation Extraction: (Mocked) Converting unstructured text into structured nodes/edges.
+# 2. Graph Construction: Building an adjacency list representation of the knowledge.
+# 3. Community Detection: Identifying clusters of closely related nodes (Leiden/Louvain analogue).
+# 4. Community Summarization: Generating high-level insights for each cluster (Map step).
+# 5. Global Search: Aggregating community summaries to answer broad questions (Reduce step).
+#
+# SCENARIO:
+# A fictional post-mortem of a failed software launch "Project Apollo".
+# - Data Chunks: Slack messages, logs, and emails.
+# - Goal: Answer "Why did the launch fail?" (A global question requiring synthesis).
+# ==============================================================================
 
+class SimpleGraph:
+    """A minimal Graph implementation using Adjacency Lists."""
     def __init__(self):
-        self.graph = collections.defaultdict(list) # Adjacency list
-        self.entities = set()
-        self.edges = []
-        self.communities = []
-        self.community_summaries = {}
+        self.nodes: Set[str] = set()
+        self.edges: Dict[str, List[str]] = {}
 
-    def index_documents(self, documents):
+    def add_edge(self, u: str, v: str):
+        self.nodes.add(u)
+        self.nodes.add(v)
+        if u not in self.edges: self.edges[u] = []
+        if v not in self.edges: self.edges[v] = []
+        if v not in self.edges[u]: self.edges[u].append(v)
+        if u not in self.edges[v]: self.edges[v].append(u) # Undirected
+
+    def get_connected_components(self) -> List[Set[str]]:
         """
-        Simulates the Indexing Phase:
-        Text -> (LLM Extraction) -> Entities/Relations -> Graph
+        Simulates 'Community Detection'.
+        In a real scenario, this would be Leiden or Louvain algorithm.
+        Here, we find connected components to represent clusters.
         """
-        print(f"--- 1. Indexing {len(documents)} Documents ---")
-        for doc in documents:
-            self._mock_llm_extraction(doc)
-
-        print(f"Extracted {len(self.entities)} entities and {len(self.edges)} relationships.")
-
-        # Build the graph structure
-        self._build_graph()
-
-        # Detect communities (Simulating Leiden Algorithm)
-        self._detect_communities()
-
-        # Generate summaries for communities
-        self._generate_community_summaries()
-
-    def _mock_llm_extraction(self, text):
-        """
-        Simulates an LLM extracting entities and relationships.
-        For this demo, we use a simple heuristic:
-        - Entities: Capitalized words (ignoring starting words if possible, but keeping it simple).
-        - Relations: If two entities appear in the same sentence, they are related.
-        """
-        sentences = text.split('.')
-        for sentence in sentences:
-            # Find capitalized words as "Entities"
-            # (Simple regex for demo purposes)
-            found_entities = list(set(re.findall(r'\b[A-Z][a-zA-Z]*\b', sentence)))
-
-            # Filter out common stop words if they accidentally get capitalized
-            stop_words = {"The", "A", "An", "In", "On", "It", "He", "She", "They"}
-            found_entities = [e for e in found_entities if e not in stop_words and len(e) > 1]
-
-            # Add to set
-            for entity in found_entities:
-                self.entities.add(entity)
-
-            # Create edges (relationships) between all pairs in the sentence
-            for i in range(len(found_entities)):
-                for j in range(i + 1, len(found_entities)):
-                    entity_a = found_entities[i]
-                    entity_b = found_entities[j]
-                    self.edges.append((entity_a, entity_b))
-                    # print(f"  [Extraction] Found relation: {entity_a} <--> {entity_b}")
-
-    def _build_graph(self):
-        """
-        Builds the adjacency list from extracted edges.
-        """
-        for u, v in self.edges:
-            self.graph[u].append(v)
-            self.graph[v].append(u) # Undirected graph
-
-    def _detect_communities(self):
-        """
-        Simulates Community Detection (e.g., Leiden/Louvain).
-        Here we just use 'Connected Components' for simplicity.
-        """
-        print("\n--- 2. Detecting Communities (Graph Clustering) ---")
         visited = set()
-        for entity in self.entities:
-            if entity not in visited:
-                component = []
-                stack = [entity]
-                visited.add(entity)
+        components = []
+
+        for node in self.nodes:
+            if node not in visited:
+                component = set()
+                stack = [node]
                 while stack:
-                    node = stack.pop()
-                    component.append(node)
-                    for neighbor in self.graph[node]:
-                        if neighbor not in visited:
-                            visited.add(neighbor)
-                            stack.append(neighbor)
-                self.communities.append(component)
+                    curr = stack.pop()
+                    if curr not in visited:
+                        visited.add(curr)
+                        component.add(curr)
+                        stack.extend([n for n in self.edges.get(curr, []) if n not in visited])
+                components.append(component)
+        return components
 
-        print(f"Detected {len(self.communities)} distinct communities (clusters).")
-        for i, comm in enumerate(self.communities):
-            print(f"  Community {i}: {comm}")
+# ==============================================================================
+# 1. THE DATASET (Unstructured Text)
+# ==============================================================================
+RAW_DOCUMENTS = [
+    # Cluster 1: Database Issues
+    "The PostgresDB is hitting max connection limits during peak hours.",
+    "Latency on the primary database has increased by 400% since the migration.",
+    "The connection pool settings in PostgresDB configuration are too low.",
 
-    def _generate_community_summaries(self):
-        """
-        Simulates generating a summary for each community.
-        In real GraphRAG, an LLM reads all text associated with these nodes.
-        Here, we just synthesize a summary string.
-        """
-        print("\n--- 3. Generating Community Summaries ---")
-        for i, comm in enumerate(self.communities):
-            # Simulation: Create a 'theme' based on the nodes
-            summary = f"This community revolves around {', '.join(comm[:3])}..."
-            if "Bug" in comm or "Fix" in comm:
-                summary += " It involves technical issues and resolutions."
-            elif "CEO" in comm or "Money" in comm:
-                summary += " It involves corporate leadership and finance."
+    # Cluster 2: Frontend/User Issues
+    "Users are reporting timeout errors on the checkout page.",
+    "The checkout page spins forever when clicking 'Buy'.",
+    "Customer support is flooded with tickets about failed transactions on the UI.",
 
-            self.community_summaries[i] = summary
-            print(f"  Summary {i}: {summary}")
+    # Cluster 3: The "Bridge" (The Root Cause linking them)
+    "The checkout service is opening a new DB connection for every single request instead of reusing them.",
+    "Bad deployment #404 introduced a bug in the transaction handler."
+]
 
-    def global_search(self, query):
-        """
-        Simulates a 'Global Search' query.
-        Instead of searching for keywords, it aggregates community summaries.
-        """
-        print(f"\n--- 4. Global Search Query: '{query}' ---")
-        print("GraphRAG Strategy: Aggregating Community Summaries...")
+# ==============================================================================
+# 2. MOCK "LLM" EXTRACTION
+# ==============================================================================
+# In production, an LLM would read the text and output (Subject, Relation, Object).
+# We simulate this with hardcoded extractions for the demo.
+def mock_llm_extraction(docs: List[str]) -> List[Tuple[str, str, str]]:
+    extracted_triples = []
 
-        # In real GraphRAG, we would score communities by relevance,
-        # but for Global Search, we often read all top-level summaries (Map-Reduce).
-
-        final_answer_context = []
-        for i, summary in self.community_summaries.items():
-            final_answer_context.append(f"- Community {i}: {summary}")
-
-        combined_context = "\n".join(final_answer_context)
-
-        print("\n[Simulating LLM Final Answer Generation based on this context]:")
-        print("-" * 40)
-        print(combined_context)
-        print("-" * 40)
-
-        # Mocking the final LLM output
-        print("\n>> GENERATED ANSWER:")
-        print(f"To answer '{query}', we look at the structural communities:")
-        print("The dataset contains distinct groups. One focuses on leadership/finance (Community 0), "
-              "while another focuses on technical operations (Community 1). "
-              "Unlike naive RAG, which might just find the word 'finance', "
-              "GraphRAG sees the whole interconnected cluster of actors.")
-
-# ==========================================
-# RUN THE SIMULATION
-# ==========================================
-
-if __name__ == "__main__":
-    # Sample Dataset: A fictional chaotic startup story
-    documents = [
-        "Alice is the CEO of FutureTech. She engaged in a meeting with Bob, the CFO, about Money.",
-        "Bob is worried about the Budget. The Budget is shrinking due to low Sales.",
-        "Charlie is a Developer at FutureTech. He found a critical Bug in the System.",
-        "The Bug caused a System crash. Charlie asked Dave for help with the Fix.",
-        "Eve is a competitor from EvilCorp. Eve is trying to steal the Algorithm from Alice."
+    # Mapping rules to simulate LLM understanding
+    extraction_rules = [
+        ("PostgresDB", "has_issue", "max connection limits"),
+        ("PostgresDB", "has_issue", "Latency"),
+        ("connection pool", "is_part_of", "PostgresDB"),
+        ("checkout page", "has_error", "timeout errors"),
+        ("checkout page", "has_error", "spins forever"),
+        ("Customer support", "receives", "tickets"),
+        ("tickets", "relate_to", "checkout page"),
+        ("checkout service", "causes", "new DB connection"),
+        ("checkout service", "affects", "PostgresDB"), # The critical link!
+        ("Bad deployment #404", "caused", "checkout service")
     ]
 
-    rag = SimpleGraphRAG()
-    rag.index_documents(documents)
+    # Return all for this simulation (in real life, it processes per doc)
+    return extraction_rules
 
-    # Perform a Global Query
-    rag.global_search("What is the overall situation at FutureTech?")
+# ==============================================================================
+# 3. MOCK "LLM" SUMMARIZATION
+# ==============================================================================
+def mock_llm_summarize_community(nodes: Set[str]) -> str:
+    """
+    Simulates the 'Map' step: summarizing a community of related nodes.
+    """
+    node_list = list(nodes)
+
+    # Logic to return distinct summaries based on keywords present in the community nodes
+    joined_nodes = " ".join(node_list).lower()
+
+    if "deployment" in joined_nodes or "service" in joined_nodes:
+        return "COMMUNITY C (Root Cause): A recent deployment (#404) broke the checkout service, causing it to mismanage database connections."
+    elif "postgres" in joined_nodes or "latency" in joined_nodes:
+        return "COMMUNITY A (Infrastructure): The Database layer is failing. PostgresDB is overwhelmed with connection spikes and high latency."
+    elif "checkout" in joined_nodes and "customer" in joined_nodes:
+        return "COMMUNITY B (User Experience): Users are unable to complete purchases. The checkout page is timing out, causing a support surge."
+    else:
+        return f"General Cluster containing: {', '.join(node_list)}"
+
+# ==============================================================================
+# 4. THE GRAPHRAG PIPELINE
+# ==============================================================================
+def run_graphrag_pipeline():
+    print(f"--- 1. INGESTION: Processing {len(RAW_DOCUMENTS)} documents ---")
+
+    # A. Indexing Phase
+    graph = SimpleGraph()
+    triples = mock_llm_extraction(RAW_DOCUMENTS)
+
+    print("\n--- 2. EXTRACTION: Identifying Entities & Relations ---")
+    for subj, rel, obj in triples:
+        print(f"   Extracted: [{subj}] --{rel}--> [{obj}]")
+        graph.add_edge(subj, obj)
+
+    # B. Community Detection
+    # In GraphRAG, this is hierarchical (Leiden algorithm). Here we use Connected Components.
+    # Note: Our mock extraction makes a fully connected graph if we aren't careful.
+    # To demonstrate 'Communities', let's assume the graph is slightly sparse or we force clusters.
+    # For this demo, let's pretend the 'Link' was harder to find, but we'll just run component detection.
+    # If the graph is fully connected (because of the "Bridge"), it will be 1 component.
+    # To show the concept of communities, we will artificially split the graph for the 'Map' step
+    # or just treat sub-clusters if our simple algo finds them.
+
+    # *Self-Correction for Demo*: Simple Connected Components will merge everything if there is a bridge.
+    # Let's verify what our graph looks like.
+    # Postgres <-> connection pool
+    # checkout service <-> Postgres (Bridge)
+    # checkout service <-> Bad deployment
+    # checkout page <-> checkout service (Implied? No, explicit link needed)
+
+    # Let's just create Communities manually to simulate the *outcome* of the Leiden algorithm
+    # which finds density clusters even in connected graphs.
+
+    simulated_communities = [
+        {"PostgresDB", "max connection limits", "Latency", "connection pool"},
+        {"checkout page", "timeout errors", "spins forever", "Customer support", "tickets"},
+        {"checkout service", "new DB connection", "Bad deployment #404", "PostgresDB", "checkout page"} # Overlap represents the bridge
+    ]
+
+    print("\n--- 3. CLUSTERING: Detecting Semantic Communities (Mocked Leiden) ---")
+    community_summaries = []
+    for i, comm in enumerate(simulated_communities):
+        print(f"   Community {i+1}: {comm}")
+        summary = mock_llm_summarize_community(comm)
+        community_summaries.append(summary)
+        print(f"   -> SUMMARY: {summary}")
+
+    # C. Global Search (The "Reduce" Step)
+    print("\n--- 4. QUERYING: Global Search ---")
+    user_query = "What is the root cause of the system failure?"
+    print(f"   User Query: '{user_query}'")
+
+    # Baseline RAG approach (Vector Search comparison)
+    print("\n   [VS] Baseline Vector Search would find:")
+    print("      - 'System failure' -> No direct matches.")
+    print("      - 'Cause' -> Maybe 'Bad deployment'.")
+    print("      - It typically retrieves top-k chunks. It might miss the connection between 'Checkout' and 'DB' if they are far apart.")
+
+    # GraphRAG approach
+    print("\n   [VS] GraphRAG Global Search:")
+    print("      Aggregating Community Summaries...")
+
+    final_context = "\n".join([f"- {s}" for s in community_summaries])
+
+    # Simulating the Final LLM generation based on the global context
+    final_answer = (
+        "Based on the global analysis of all clusters:\n"
+        "The system failure is manifesting as User Timeouts (Community B) and Database Crashes (Community A). \n"
+        "The CONNECTING factor is the 'Checkout Service' (Community C). \n"
+        "ROOT CAUSE: Bad Deployment #404 introduced a bug in the Checkout Service that causes it to open new DB connections for every request, "
+        "overwhelming the PostgresDB connection pool."
+    )
+
+    print("\n   === FINAL GRAPHRAG ANSWER ===")
+    print(final_answer)
+
+if __name__ == "__main__":
+    run_graphrag_pipeline()
