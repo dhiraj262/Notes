@@ -1,179 +1,173 @@
-# Day 49: Design Case - YouTube / Netflix
+# Day 49: Design Case - Youtube/Netflix (Video Streaming)
 
 ## 🎯 Goal
-Design a global video streaming platform supporting uploads, transcoding, and low-latency playback.
-**Scale**: 1 Billion hours of video watched daily.
+Design a video streaming platform where users can upload, view, and share videos.
+**Focus**: Large File Handling, Transcoding, CDNs, and Adaptive Streaming.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Upload**: Users upload video files (MP4, MKV).
-2.  **Transcoding**: Convert raw video into multiple formats (resolutions/codecs) for different devices.
-3.  **Streaming**: Smooth playback with zero buffering (Adaptive Bitrate).
+1.  **Upload**: Users upload video files (MOV, MP4, AVI).
+2.  **View**: Users watch videos (smooth streaming, no buffering).
+3.  **Search**: Users can search by title.
+4.  **Stats**: View count, Likes.
 
 ### Non-Functional
 1.  **High Availability**: Videos must always be playable.
-2.  **Scalability**: Handle viral videos (millions of concurrent viewers).
-3.  **Performance**: Low latency start-up time.
+2.  **Scalability**: Support viral videos (Justin Bieber effect).
+3.  **Performance**: Low latency start time.
+4.  **Reliability**: No lost uploads.
 
 ---
 
 ## 📐 Capacity Estimation
 *   **DAU**: 100 Million.
+*   **Uploads**: 1 video/user/year -> 300k videos/day.
+*   **Views**: 5 videos/user/day -> 500 Million views/day.
 *   **Storage**:
-    *   500 hours of video uploaded per minute.
-    *   1 min = 50MB (Raw). 500 * 60 * 50MB = 1.5 TB/hour.
-    *   **Petabytes** of storage needed daily. (Use S3/Glacier).
-*   **Bandwidth**:
-    *   Massive outbound traffic. CDN costs are the biggest expense.
+    *   Avg video size: 500MB (Source). Transcoded versions: 1GB total.
+    *   Daily: 300k * 1GB = 300 TB/day.
+    *   Bandwidth: Massive. CDN is mandatory.
 
 ---
 
 ## 🧠 Core Design Decisions
 
-### 1. Storage: Blob Store + CDN
-*   **Raw Video**: Store in S3 (Cheap, durable).
-*   **Processed Chunks**: Store in S3, but cache in **CDN** (Content Delivery Network - Cloudflare/Akamai).
-*   **Why CDN?**: Moves content closer to the user (Edge servers). Reduces latency and buffers.
+### 1. Protocols: UDP vs TCP vs HTTP
+*   **UDP**: Fast but loses packets (glitches). Good for live calls (Zoom), bad for Movies.
+*   **TCP**: Reliable but slow (head-of-line blocking).
+*   **HTTP (DASH/HLS)**: **Winner**.
+    *   Videos are chunked into small segments (2-10 seconds).
+    *   Client downloads chunks via HTTP.
+    *   Firewall friendly. CDN friendly.
 
-### 2. Transcoding (The Heavy Lifting)
-*   Raw video (4K, 50GB) is too big to stream.
-*   We need to convert it to: 1080p, 720p, 480p, 360p.
-*   **DAG Model**: Split video into 5-minute segments. Process segments in parallel workers. Merge them back.
+### 2. Adaptive Bitrate Streaming (ABR)
+*   **Problem**: Users have different internet speeds (4G, 5G, Fiber).
+*   **Solution**: Transcode original video into multiple resolutions (360p, 720p, 1080p, 4K) and bitrates.
+*   Client automatically switches quality based on bandwidth.
 
-### 3. Adaptive Bitrate Streaming (DASH/HLS)
-*   **Protocol**: HLS (HTTP Live Streaming) or MPEG-DASH.
-*   How it works:
-    *   Server splits video into 10-second chunks (`.ts` files).
-    *   Creates a `manifest.m3u8` file listing chunks for all resolutions.
-    *   **Player** detects user bandwidth. If slow, requests 360p chunk. If fast, switches to 1080p chunk seamlessly.
+### 3. Storage: BLOB + CDN
+*   **Original File**: Store in AWS S3 (Glacier for backup).
+*   **Transcoded Files**: Store in S3 (Standard).
+*   **Delivery**: Push popular content to CDNs (Cloudfront/Akamai) at the edge.
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Client** uploads video -> **Original Storage (S3)**.
-2.  **Upload Service** triggers message to **Kafka**.
-3.  **Transcoding Service** (Consumer):
-    *   Downloads video. Splits into chunks.
-    *   Transcodes to multiple formats (Parallel Processing).
-    *   Uploads chunks to **S3** and **CDN**.
-4.  **Metadata DB**: Stores "VideoID -> S3 URL".
-5.  **Streaming**:
-    *   User requests video.
-    *   Server returns `manifest.m3u8`.
-    *   User's player pulls chunks directly from **CDN**.
+### Upload Path
+1.  **User** uploads video to `Original Storage` (S3) via Signed URL.
+2.  **Upload Service** updates Metadata DB (Processing status = "Pending").
+3.  **Transcoding Service** (Worker Cluster):
+    *   Pulls video from S3.
+    *   Splits into chunks.
+    *   Encodes to mp4, webm, hls.
+    *   Generates Thumbnail.
+4.  **Completion**: Updates DB (Status = "Ready"). Pushes to CDN.
+
+### Viewing Path
+1.  **User** requests video page.
+2.  **Web Server** returns Metadata (Title, Description) + **Manifest File URL**.
+3.  **Client Player** reads Manifest (list of .ts chunks for different qualities).
+4.  **Client** downloads chunks from nearest **CDN**.
+5.  **Client** adapts quality dynamically.
 
 ---
 
-## 💻 Code Simulation: Upload & Transcode Flow
+## 💻 Code Simulation: Adaptive Bitrate Selector
 
-Simulating the workflow of uploading a raw video, transcoding it into chunks, and serving it via Adaptive Bitrate logic.
+Simulating the client-side logic that chooses the next chunk quality based on bandwidth.
 
 ```python
-class VideoProcessingService:
+import random
+import time
+
+class VideoPlayer:
     def __init__(self):
-        self.storage = {} # Mock S3
-        self.cdn = {}     # Mock CDN
+        # Available bitrates in kbps
+        self.qualities = {
+            "360p": 500,
+            "720p": 1500,
+            "1080p": 4000,
+            "4K": 12000
+        }
+        self.buffer = 0 # seconds of video buffered
 
-    def upload_raw_video(self, video_id, content):
-        print(f"⬆️ Uploading raw video: {video_id}...")
-        self.storage[f"raw_{video_id}"] = content
-        print("   ✅ Upload Complete.")
-        self.trigger_transcoding(video_id)
+    def estimate_bandwidth(self):
+        # Simulate fluctuating network (kbps)
+        return random.randint(300, 8000)
 
-    def trigger_transcoding(self, video_id):
-        print(f"⚙️ Transcoding started for {video_id}...")
+    def select_quality(self, bandwidth):
+        # Conservative approach: Use 80% of bandwidth
+        safe_bandwidth = bandwidth * 0.8
 
-        # Simulate generating different resolutions
-        resolutions = ["480p", "720p", "1080p"]
-        manifest = f"#EXTM3U\n#Video {video_id}"
+        selected = "360p" # Default fallback
+        for quality, bitrate in sorted(self.qualities.items(), key=lambda x: x[1]):
+            if bitrate <= safe_bandwidth:
+                selected = quality
+            else:
+                break
+        return selected
 
-        for res in resolutions:
-            # Create chunk
-            chunk_name = f"{video_id}_{res}.ts"
-            self.storage[chunk_name] = f"[Binary Data for {res}]"
+    def download_chunk(self):
+        bw = self.estimate_bandwidth()
+        quality = self.select_quality(bw)
+        print(f"📡 Network: {bw} kbps | Choosing: {quality}")
 
-            # Push to CDN
-            self.cdn[chunk_name] = self.storage[chunk_name]
-            print(f"   🎥 Generated {res} chunk -> Pushed to CDN")
+        # Simulate download
+        time.sleep(0.5)
+        self.buffer += 4 # Add 4 seconds to buffer
 
-            manifest += f"\n#EXT-X-STREAM-INF:BANDWIDTH=...,RESOLUTION={res}\n{chunk_name}"
-
-        # Save manifest
-        self.cdn[f"{video_id}.m3u8"] = manifest
-        print("   ✅ Transcoding & Distribution Complete.")
-
-    def play_video(self, video_id, user_bandwidth):
-        print(f"\n▶️ User requesting {video_id} (Bandwidth: {user_bandwidth})")
-        manifest = self.cdn.get(f"{video_id}.m3u8")
-        if not manifest:
-            print("   ❌ Video not found.")
-            return
-
-        # Simple Adaptive Bitrate Logic
-        if user_bandwidth == "HIGH":
-            chosen = "1080p"
-        elif user_bandwidth == "MEDIUM":
-            chosen = "720p"
-        else:
-            chosen = "480p"
-
-        chunk = f"{video_id}_{chosen}.ts"
-        print(f"   📡 Streaming {chosen} chunk from CDN: {chunk}")
+    def play(self):
+        for i in range(5):
+            self.download_chunk()
+            print(f"   ▶️ Playing... Buffer: {self.buffer}s")
+            self.buffer -= 2 # Consume 2 seconds
+            if self.buffer < 0:
+                print("   ⚠️ Buffering...")
+                self.buffer = 0
 
 if __name__ == "__main__":
-    netflix = VideoProcessingService()
-
-    # 1. User Uploads
-    netflix.upload_raw_video("movie_1", "Raw mp4 data")
-
-    # 2. Users Watch
-    netflix.play_video("movie_1", "HIGH")   # Fast Internet
-    netflix.play_video("movie_1", "LOW")    # Slow Internet
+    player = VideoPlayer()
+    player.play()
 ```
 
 **Output:**
 ```
-⬆️ Uploading raw video: movie_1...
-   ✅ Upload Complete.
-⚙️ Transcoding started for movie_1...
-   🎥 Generated 480p chunk -> Pushed to CDN
-   🎥 Generated 720p chunk -> Pushed to CDN
-   🎥 Generated 1080p chunk -> Pushed to CDN
-   ✅ Transcoding & Distribution Complete.
-
-▶️ User requesting movie_1 (Bandwidth: HIGH)
-   📡 Streaming 1080p chunk from CDN: movie_1_1080p.ts
-
-▶️ User requesting movie_1 (Bandwidth: LOW)
-   📡 Streaming 480p chunk from CDN: movie_1_480p.ts
+📡 Network: 7200 kbps | Choosing: 1080p
+   ▶️ Playing... Buffer: 4s
+📡 Network: 1200 kbps | Choosing: 360p
+   ▶️ Playing... Buffer: 6s
+📡 Network: 4500 kbps | Choosing: 1080p
+   ▶️ Playing... Buffer: 8s
+...
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. How to handle "Thundering Herd"?
-*   When a new episode of a popular show drops, millions request it at once.
-*   **CDN** handles 99% of this. But if CDN misses, Origin S3 might die.
-*   **Solution**: **Request Collapsing** (CDN groups 1000 requests for the same file into 1 request to Origin).
+### 1. How to optimize storage costs?
+*   **Deduplication**: Check hash of uploaded file.
+*   **Cold Storage**: Move unpopular videos to S3 Glacier (cheaper, slower access) after 6 months.
+*   **Codec Efficiency**: Use HEVC (H.265) or AV1 to save 30% bandwidth over H.264.
 
-### 2. Encryption (DRM)?
-*   Netflix/Disney+ need to prevent piracy.
-*   Use **AES Encryption** on chunks. The player needs a license key to decrypt and play.
+### 2. Directed Acyclic Graph (DAG) for Transcoding
+*   Video processing is a pipeline: `Upload -> Split -> [Audio Extract, Video Resize, Thumbnail] -> Merge`.
+*   Facebook/Netflix manage this using a DAG scheduler to parallelize tasks.
 
-### 3. Recommendations?
-*   Use a separate **Machine Learning System** (Collaborative Filtering) to generate the "Home Screen" feed. (See Day 72).
+### 3. DRM (Digital Rights Management)
+*   Need to encrypt chunks so users can't just download and resell Netflix movies.
+*   Use Widevine/FairPlay.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is Transcoding?**
-    *   The process of converting a video file from one format/resolution to another.
+1.  **What is a CDN?**
+    *   Content Delivery Network. A network of servers distributed geographically to deliver content (videos, images) from the location closest to the user.
 2.  **What is HLS?**
-    *   HTTP Live Streaming. A protocol that breaks video into small HTTP file downloads, allowing bitrate switching.
-3.  **Why use a DAG (Directed Acyclic Graph) for transcoding?**
-    *   To parallelize tasks. Step 1: Split video. Step 2 (Parallel): Encode chunks. Step 3: Merge.
+    *   HTTP Live Streaming. An ABR protocol developed by Apple. Splits video into `.ts` files and uses a `.m3u8` playlist.
+3.  **Why split videos into chunks?**
+    *   Allows fast seeking (jump to 50:00 without downloading 0-49:00). Allows switching quality mid-stream.

@@ -3,173 +3,188 @@
 ## 🎯 Goal
 Design a scalable Web Crawler (Google Bot) to index the entire internet.
 **Scale**: 1 Billion pages/month.
+Design a scalable web crawler to download and index the entire web (e.g., Googlebot).
+**Focus**: URL Frontier, Politeness, Deduplication, and Parsing.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Crawl**: Start from seed URLs, fetch content, extract links, repeat.
-2.  **Politeness**: Do not hammer a website. Respect `robots.txt`.
-3.  **Content**: Store HTML for indexing.
+1.  **Crawl**: Start with seed URLs and follow links recursively.
+2.  **Extract**: Parse HTML, extract text and links.
+3.  **Store**: Save content to blob storage (S3) and metadata to DB.
 
 ### Non-Functional
-1.  **Scalability**: Must be distributed (The web is huge).
-2.  **Robustness**: Handle bad HTML, infinite loops, and server errors.
-3.  **Extensibility**: Support new content types (Images, PDFs).
+1.  **Scalability**: Crawl 1 Billion pages/month.
+2.  **Politeness**: Do not swamp a target server. Respect `robots.txt`.
+3.  **Extensibility**: Support new content types (PDF, Images) later.
+4.  **Robustness**: Handle malformed HTML, infinite loops, and spider traps.
 
 ---
 
 ## 📐 Capacity Estimation
-*   **Pages**: 1 Billion/month = ~400/sec (Seems low, let's target **10k pages/sec** for a real crawler).
+*   **Pages**: 1 Billion pages / month.
+*   **QPS**: 1B / (30 * 24 * 3600) ≈ **400 pages/sec**. (Very manageable).
 *   **Storage**:
     *   Avg page size: 500KB.
-    *   1B pages * 500KB = 500 TB/month.
-    *   5 years = 30 PB. (Need S3/HDFS).
+    *   Total: 1B * 500KB = 500 TB/month.
+    *   5 Years: **30 PB**.
 
 ---
 
 ## 🧠 Core Design Decisions
 
 ### 1. BFS vs DFS?
-*   **BFS (Breadth-First Search)**: Usually better. We want to cover many domains, not go deep into one immediately (which might look like an attack).
-*   **DFS**: Good for "vertical" crawling, but bad for politeness.
+*   **DFS**: Might go too deep into one domain (spider trap).
+*   **BFS**: Better coverage of diverse domains.
+*   **Decision**: **BFS** using a priority queue (URL Frontier).
 
-### 2. URL Frontier (The Manager)
-*   The component that decides "What to crawl next?".
-*   **Priority Queue**: Crawl high-rank pages (PageRank) more often.
-*   **Politeness Queue**: Ensure we don't send 100 requests/sec to `cnn.com`. Map `hostname` to a specific worker thread with a delay.
+### 2. URL Frontier
+*   Not just a simple Queue.
+*   Needs to prioritize high-quality pages (PageRank).
+*   Needs to ensure **Politeness** (don't hit `example.com` 100 times/sec).
 
-### 3. Duplicate Detection
-*   30% of the web is duplicate content.
-*   **URL Dedupe**: Bloom Filter or Hash Check (MD5 of URL).
-*   **Content Dedupe**: SimHash or Checksum of HTML content to detect "Same content, different URL".
+### 3. Handling Duplicates
+*   30% of web is duplicates.
+*   **SimHash / Checksum**: Compute hash of content. If hash exists, discard.
+*   **Bloom Filter**: Efficiently check if URL has already been visited.
+
+### 4. DNS Resolution
+*   DNS lookup is slow (10ms - 500ms).
+*   **Solution**: Build a custom DNS Cache. Keep IP in memory to avoid repeated DNS queries.
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Seed URLs**: Input list.
-2.  **URL Frontier**:
-    *   **Front Queue (Prioritizer)**: Assigns priority (1-10).
-    *   **Back Queue (Politeness)**: Maps Hostname -> Worker. Enforces delays.
-3.  **HTML Fetcher**: Downloads page. Checks DNS Cache.
-4.  **Content Parser**: Validates HTML. Extracts Links.
-5.  **Dedup Service**: Checks Bloom Filter. If new, add to storage.
-6.  **Storage**: S3 (HTML), SQL (Metadata).
-7.  **Loop**: Extracted links go back to URL Frontier.
+1.  **Seed URLs**: Entry point (e.g., cnn.com, wikipedia.org).
+2.  **URL Frontier**: Manages the schedule.
+    *   **Front Queue** (Prioritizer): Orders URLs by importance.
+    *   **Back Queue** (Politeness): Maps URLs to a specific queue based on domain. One thread per domain queue.
+3.  **HTML Downloader**: Fetches the page content.
+    *   Checks **DNS Cache**.
+    *   Checks **Robots.txt Cache**.
+4.  **Content Parser**: Validates HTML, strips scripts.
+5.  **Content Deduper**: Calculates checksum. Discards if duplicate.
+6.  **URL Extractor**: Finds new links.
+7.  **URL Deduper** (Bloom Filter): Discards if URL already in Frontier.
+8.  **Storage**: Save to S3 (Content) and HBase (Metadata).
 
 ---
 
-## 💻 Code Simulation: Simple Crawler
+## 💻 Code Simulation: Simple Crawler Logic
 
-Simulating the core loop: Frontier -> Fetch -> Parse -> Dedupe.
+Simulating the loop of fetching, parsing, and scheduling.
 
 ```python
 import queue
 import time
-import random
+import threading
+from urllib.parse import urlparse
 
 class WebCrawler:
     def __init__(self):
-        self.url_frontier = queue.Queue()
+        self.url_queue = queue.Queue()
         self.visited_urls = set()
-        self.dns_cache = {} # Host -> IP
+        self.visited_lock = threading.Lock()
 
     def add_seed(self, url):
-        self.url_frontier.put(url)
-        self.visited_urls.add(url)
+        self.url_queue.put(url)
 
-    def is_allowed(self, url):
-        # Mock Robots.txt check
-        if "forbidden" in url:
-            print(f"🚫 Blocked by Robots.txt: {url}")
-            return False
-        return True
+    def is_visited(self, url):
+        with self.visited_lock:
+            return url in self.visited_urls
 
-    def resolve_dns(self, url):
-        host = url.split("/")[0]
-        if host not in self.dns_cache:
-            # Simulate DNS lookup
-            self.dns_cache[host] = f"192.168.1.{random.randint(1, 255)}"
-        return self.dns_cache[host]
+    def mark_visited(self, url):
+        with self.visited_lock:
+            self.visited_urls.add(url)
 
-    def crawl(self):
-        while not self.url_frontier.empty():
-            url = self.url_frontier.get()
+    def crawl(self, thread_id):
+        while True:
+            try:
+                url = self.url_queue.get(timeout=2)
 
-            if not self.is_allowed(url):
-                continue
+                if self.is_visited(url):
+                    self.url_queue.task_done()
+                    continue
 
-            ip = self.resolve_dns(url)
-            print(f"🕷️ Crawling: {url} (IP: {ip})")
+                print(f"🕷️ [Thread-{thread_id}] Crawling: {url}")
 
-            # Simulate processing time
-            # time.sleep(0.1)
+                # simulate network delay
+                time.sleep(1)
 
-            # Mock Parsing HTML and finding new links
-            new_links = self.extract_links(url)
+                # Mock Parsing: Assume every page links to a sub-page
+                new_links = self.parse_links(url)
 
-            for link in new_links:
-                if link not in self.visited_urls:
-                    self.visited_urls.add(link)
-                    self.url_frontier.put(link)
-                    print(f"   ➕ Found new link: {link}")
+                self.mark_visited(url)
 
-    def extract_links(self, url):
-        # Mock link extraction logic
-        if url == "google.com":
-            return ["google.com/images", "google.com/maps", "evil-site.com/forbidden"]
-        elif url == "google.com/images":
-            return ["google.com/cat.jpg"]
-        return []
+                for link in new_links:
+                    if not self.is_visited(link):
+                        self.url_queue.put(link)
+
+                self.url_queue.task_done()
+
+            except queue.Empty:
+                break
+
+    def parse_links(self, url):
+        # Mock logic: generate 2 fake links
+        base = urlparse(url).netloc
+        return [f"http://{base}/page1", f"http://{base}/page2"]
 
 if __name__ == "__main__":
     crawler = WebCrawler()
-    crawler.add_seed("google.com")
+    crawler.add_seed("http://example.com")
+    crawler.add_seed("http://wikipedia.org")
 
-    print("--- Starting Crawl ---")
-    crawler.crawl()
-    print("--- Crawl Finished ---")
+    threads = []
+    for i in range(3):
+        t = threading.Thread(target=crawler.crawl, args=(i,))
+        t.start()
+        threads.append(t)
+
+    for t in threads: t.join()
+
+    print(f"✅ Crawling Complete. Visited {len(crawler.visited_urls)} pages.")
 ```
 
 **Output:**
 ```
---- Starting Crawl ---
-🕷️ Crawling: google.com (IP: 192.168.1.80)
-   ➕ Found new link: google.com/images
-   ➕ Found new link: google.com/maps
-   ➕ Found new link: evil-site.com/forbidden
-🕷️ Crawling: google.com/images (IP: 192.168.1.80)
-   ➕ Found new link: google.com/cat.jpg
-🕷️ Crawling: google.com/maps (IP: 192.168.1.80)
-🚫 Blocked by Robots.txt: evil-site.com/forbidden
-🕷️ Crawling: google.com/cat.jpg (IP: 192.168.1.80)
---- Crawl Finished ---
+🕷️ [Thread-0] Crawling: http://example.com
+🕷️ [Thread-1] Crawling: http://wikipedia.org
+🕷️ [Thread-0] Crawling: http://example.com/page1
+🕷️ [Thread-2] Crawling: http://example.com/page2
+🕷️ [Thread-1] Crawling: http://wikipedia.org/page1
+...
+✅ Crawling Complete. Visited 6 pages.
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. How to handle "Spider Traps"?
-*   Infinite loop: `website.com/a/b/a/b...`.
-*   **Solution**: Limit max URL length. Limit max directory depth. Check for cycling patterns.
+### 1. Politeness Design
+*   How to ensure we wait 1 second between requests to `cnn.com`?
+*   Map `cnn.com` to Queue #5.
+*   Worker #5 only reads from Queue #5.
+*   Worker sleeps after processing a job.
 
-### 2. DNS is a bottleneck?
-*   DNS resolution takes time (20ms-500ms).
-*   **Solution**: Build a custom DNS Caching Server. Keep the cache updated aggressively.
+### 2. Spider Traps
+*   Infinite loops: `example.com/a/b/c/a/b/c...`
+*   **Solution**: Limit max URL length. Limit max crawl depth.
 
 ### 3. Updating stale content?
-*   How often to re-crawl `cnn.com`?
-*   Use `Last-Modified` header. Learn the update frequency pattern (Adaptive Recrawl).
+*   How often to re-crawl?
+*   Use `Last-Modified` header.
+*   Prioritize dynamic sites (News) over static sites.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is `robots.txt`?**
-    *   A standard file that tells crawlers which parts of the site they are NOT allowed to visit.
-2.  **What is a Bloom Filter used for here?**
-    *   To quickly check if a URL has already been visited (Space efficient, but has false positives).
-3.  **Why use Consistent Hashing in a Crawler?**
-    *   To distribute hostnames across different download workers. E.g., `google.com` always goes to Worker 1, `yahoo.com` to Worker 2.
+1.  **What is a Bloom Filter?**
+    *   A probabilistic data structure used to test if an element is a member of a set. False positives are possible, false negatives are not. Used to check if URL visited.
+2.  **Why use a custom DNS Cache?**
+    *   Standard DNS lookups are synchronous and slow. A crawler needs high-throughput asynchronous resolution.
+3.  **What is `robots.txt`?**
+    *   A standard used by websites to communicate with web crawlers, specifying which areas of the website should not be processed or scanned.
