@@ -1,101 +1,111 @@
 # Day 43: Consistency Models
 
 ## 🎯 Goal
-Understand the spectrum of consistency in distributed systems, from "Everyone sees the same thing instantly" to "Eventually everyone will agree."
-**Focus**: Strong, Eventual, Causal Consistency, and the PACELC theorem.
+Understand the spectrum of consistency guarantees in distributed systems.
+**Focus**: Strong vs Eventual vs Causal Consistency.
 
 ---
 
 ## 🧩 Key Concepts
 
 ### 1. Strong Consistency (Linearizability)
-*   **Definition**: Once a write is acknowledged, all subsequent reads (from any node) return the new value.
-*   **Real World**: Bank Account balances.
-*   **Cost**: High Latency (Must replicate to all nodes before Ack) & Low Availability (If one node is down, write might fail).
-*   **Systems**: SQL Databases, CP systems (Zookeeper, Etcd).
+*   **Definition**: Once a write is confirmed, *all* subsequent reads (from any node) see that value.
+*   **Analogy**: A single shared notebook. Only one person writes at a time. Everyone sees the ink immediately.
+*   **Cost**: High Latency. Requires synchronous replication (waiting for all nodes to agree).
+*   **Use Case**: Bank balances, Inventory counters.
 
 ### 2. Eventual Consistency
-*   **Definition**: If no new updates are made, eventually all accesses will return the last updated value. Reads might return stale data for a while.
-*   **Real World**: DNS, YouTube View Count, Facebook Likes.
-*   **Benefit**: High Availability & Low Latency.
-*   **Systems**: Cassandra, DynamoDB (configurable), DNS.
+*   **Definition**: If no new writes happen, eventually all nodes will agree. In the meantime, you might read stale data.
+*   **Analogy**: Updating your profile picture. Your friend in Tokyo might see the old one for 5 minutes.
+*   **Cost**: Low Latency. Fire and forget.
+*   **Use Case**: Social media feeds, Likes, Comments, DNS.
 
 ### 3. Causal Consistency
-*   **Definition**: Operations that are causally related (A caused B) must be seen in that order. Unrelated operations can be seen in any order.
-*   **Real World**: Chat replies. (You shouldn't see "Haha" before seeing the joke it replied to).
+*   **Definition**: Events that are causally related must be seen in order. Unrelated events can be out of order.
+*   **Scenario**:
+    *   A posts: "I love Star Wars."
+    *   B replies: "Me too!"
+    *   *Problem*: If C sees B's reply *before* A's post, it makes no sense.
+    *   *Fix*: Causal consistency ensures B is seen after A.
+*   **Use Case**: Chat apps, Comment threads.
 
 ---
 
-## 🏗️ PACELC Theorem
-An extension of CAP Theorem.
-*   **If Partition (P)**: Choose Availability (A) or Consistency (C).
-*   **Else (E)** (Normal operation): Choose Latency (L) or Consistency (C).
-*   *Meaning*: Even when the network is fine, you have to trade off speed vs correctness.
-    *   **DynamoDB/Cassandra**: Tunable. `R=1, W=1` (Fast, inconsistent). `R=Quorum, W=Quorum` (Slow, consistent).
+## 📊 Comparison Table
+
+| Model | Latency | Availability (CAP) | Implementation | Example |
+| :--- | :--- | :--- | :--- | :--- |
+| **Strong** | High | Low (CP) | 2PC, Paxos, Raft | SQL, Etcd, ZooKeeper |
+| **Eventual** | Low | High (AP) | Gossip Protocol, Async Replication | DNS, DynamoDB (default) |
+| **Causal** | Medium | Medium | Vector Clocks | Cassandra (Tunable) |
 
 ---
 
-## 💻 Code Simulation: Quorum Consistency
-A simulation of reading/writing to 3 nodes with configurable `R` and `W`.
+## 💻 Code Simulation: Replication Lag
+
+Simulating the delay between writing to a Master and reading from a Replica (Eventual Consistency).
 
 ```python
-class Node:
-    def __init__(self, name):
-        self.name = name
-        self.data = 0 # Initial state
+import time
+import threading
 
-    def write(self, value):
-        self.data = value
-        return True
+class Database:
+    def __init__(self):
+        self.master_data = {}
+        self.replica_data = {}
 
-    def read(self):
-        return self.data
+    def write_master(self, key, value):
+        print(f"✍️  Written to Master: {key}={value}")
+        self.master_data[key] = value
+        # Trigger async replication
+        threading.Thread(target=self._replicate, args=(key, value)).start()
 
-nodes = [Node("N1"), Node("N2"), Node("N3")]
+    def read_replica(self, key):
+        val = self.replica_data.get(key, "N/A")
+        print(f"👓 Read from Replica: {key}={val}")
 
-def write_quorum(value, w):
-    success_count = 0
-    for node in nodes:
-        if node.write(value):
-            success_count += 1
-            if success_count >= w:
-                return True
-    return False
+    def _replicate(self, key, value):
+        # Simulate Network Lag
+        time.sleep(1)
+        self.replica_data[key] = value
+        print(f"   ... (1s later) Replicated to Replica ...")
 
-def read_quorum(r):
-    values = []
-    # Simulate reading from first 'r' available nodes
-    # In reality, we'd read timestamps and return the latest
-    for i in range(r):
-        values.append(nodes[i].read())
+if __name__ == "__main__":
+    db = Database()
 
-    # Return the most frequent or max version
-    return max(set(values), key=values.count)
+    # 1. Update Profile
+    db.write_master("username", "cool_guy_99")
 
-# Simulation
-# Scenario: W=2, R=2 (Strong Consistency because W+R > N)
-# N=3.
-print("Writing 100 to 2 nodes...")
-write_quorum(100, 2)
-# Note: Node 3 might still have 0.
+    # 2. Immediately view profile (Hit Replica)
+    db.read_replica("username")
 
-print(f"Reading from 2 nodes: {read_quorum(2)}")
+    # 3. Wait a bit
+    time.sleep(1.5)
+    db.read_replica("username")
+```
+
+**Output:**
+```
+✍️  Written to Master: username=cool_guy_99
+👓 Read from Replica: username=N/A
+   ... (1s later) Replicated to Replica ...
+👓 Read from Replica: username=cool_guy_99
 ```
 
 ---
 
-## ⚠️ The Trap: "Read Your Own Writes"
-*   **Problem**: User posts a comment (Write to Leader), page refreshes (Read from Follower). Follower hasn't synced yet. User thinks comment is lost.
-*   **The Fix**: **Stickiness**.
-    *   If a user modified data recently, force their reads to go to the Leader (or the same replica they wrote to) for X minutes.
+## ⚠️ The Trap: "I want Strong Consistency Everywhere"
+*   **Trap**: Choosing Strong Consistency "just to be safe".
+*   **Reality**: It makes your system slow and fragile. If one node is slow, the write halts.
+*   **The Fix**: Ask "Does it matter if this data is 1 second old?" (e.g., View count on a YouTube video). If not, use Eventual.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is a Sloppy Quorum?**
-    *   In systems like Dynamo, if preferred nodes are down, write to *any* healthy node (hinted handoff) to satisfy W. Increases availability but risks consistency.
-2.  **Equation for Strong Consistency?**
-    *   `W + R > N`. (Write nodes + Read nodes > Total nodes).
-    *   Guarantees at least one node in the Read set has the latest Write.
-3.  **Monotonic Read Consistency?**
-    *   Guarantee that if a user sees a value, they will never see an older value in subsequent reads.
+
+1.  **What is a "Read Your Own Writes" consistency?**
+    *   A guarantee that if I update my profile, *I* will see the new one immediately, even if others don't. Implementation: Pin the user to a specific replica or read from Master for 1 minute after write.
+2.  **What is a Vector Clock?**
+    *   A metadata list attached to data `[NodeA: 1, NodeB: 2]` used to detect conflicts and causality in distributed systems.
+3.  **What is Tunable Consistency?**
+    *   Systems like Cassandra allow you to choose `W=1` (Fast, Unsafe) or `W=ALL` (Slow, Strong) per query.

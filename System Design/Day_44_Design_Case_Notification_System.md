@@ -1,112 +1,157 @@
 # Day 44: Design Case - Notification System
 
 ## 🎯 Goal
-Design a scalable notification service that can send millions of emails, SMS, and Push notifications (APNS/FCM).
-**Focus**: Pluggability, Rate Limiting, and Retry Mechanisms.
+Design a scalable notification service that can handle millions of Push, Email, and SMS notifications daily.
+**Focus**: Pluggability, Rate Limiting, and Reliability.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Send**: Support Email, SMS, Push (iOS/Android).
-2.  **Bulk**: Ability to blast "Breaking News" to 10M users.
-3.  **Prioritization**: OTPs > Marketing Emails.
-4.  **Tracking**: Did the user open/click?
+1.  **Send Notifications**: Support Email (SendGrid/SES), SMS (Twilio), and Push (FCM/APNS).
+2.  **Bulk Send**: Send a message to 1 million users at once (e.g., "Black Friday Sale").
+3.  **Prioritization**: OTPs (High) must go before Marketing (Low).
+4.  **User Preferences**: Users can opt-out of SMS or Email.
 
 ### Non-Functional
-1.  **Reliability**: Messages must not be lost (At-least-once).
-2.  **Scalability**: Handle spikes (New Year's Eve).
-3.  **Extensibility**: Easy to add Slack/WhatsApp later.
+1.  **High Throughput**: 10M notifications/day.
+2.  **Reliability**: Never lose an OTP.
+3.  **Extensibility**: Easy to add WhatsApp or Slack later.
 
 ---
 
 ## 📐 Capacity Estimation
-*   **DAU**: 10 Million.
-*   **Avg Notifications**: 5 per user/day = 50M notifications/day.
-*   **QPS**: 50M / 86400 ≈ **600 QPS** (average).
-*   **Peak**: Sports event or breaking news -> 100k QPS.
-*   **Storage**: Log every notification for audit. 50M * 1KB = 50GB/day.
+*   **DAU**: 10 Million Users.
+*   **Avg Notifications**: 5 per user/day.
+*   **Total**: 50 Million requests/day.
+*   **Peak**: 50M / 86400 ≈ 600 req/sec. (Easy).
+*   **Spike**: Breaking news might trigger 10M messages in 5 mins -> **33k req/sec**. (Needs Kafka).
+
+---
+
+## 🧠 Core Design Decisions
+
+### 1. Decoupling with Message Queues
+*   **Problem**: If we call Twilio API directly for 1M users, Twilio might rate-limit us, or our server might crash waiting for responses.
+*   **Solution**: `API Server` -> `Kafka` -> `Workers`.
+*   **Kafka Topics**:
+    *   `notif-priority-high` (OTPs)
+    *   `notif-priority-low` (Marketing)
+
+### 2. Pluggable Providers
+*   Don't hardcode "Twilio". Define an `SMSProvider` interface.
+*   If Twilio goes down, failover to Nexmo automatically.
+
+### 3. User Preferences (The Filter)
+*   Before sending, the worker must check `UserPreferencesDB`.
+*   If User 123 has `sms_enabled = false`, drop the message.
+*   *Optimization*: Cache preferences in Redis.
 
 ---
 
 ## 🏗️ System Architecture
 
-### 1. Components
-1.  **Notification Service**: Entry point API (`POST /send`). Validates input.
-2.  **Message Queues (Kafka/RabbitMQ)**: Critical for buffering.
-    *   Topics: `otp_sms`, `marketing_email`, `push_updates`.
-3.  **Workers**: Pull from queues and call 3rd party providers.
-4.  **3rd Party Providers**:
-    *   Email: SendGrid / Amazon SES.
-    *   SMS: Twilio / Nexmo.
-    *   Push: Firebase (FCM) / Apple (APNS).
-
-### 2. Flow
-1.  **Client** calls `Notification Service`.
-2.  **Service** validates and pushes event to **Kafka** (Topic based on priority/type).
-    *   High Priority -> `critical_queue`.
-    *   Low Priority -> `bulk_queue`.
-3.  **Workers** pick up message.
-4.  **Workers** call Twilio/FCM.
-5.  **Workers** save status (`Sent`, `Failed`) to DB.
+1.  **Notification Service (API)**: Receives JSON payload. Validates params. Pushes to Kafka.
+2.  **Kafka**: Stores events reliably. Partitioned by `user_id` (so one user gets messages in order).
+3.  **Workers**:
+    *   Read from Kafka.
+    *   Check **Redis Cache** (User Preferences).
+    *   Check **Rate Limiter** (Don't spam user > 5 times/hour).
+    *   Call 3rd Party API (FCM/Twilio).
+4.  **Retry Queue**: If Twilio fails (500 Error), push message to `retry-queue` with exponential backoff.
 
 ---
 
-## 💻 Code Simulation: Worker with Rate Limiting
+## 💻 Code Simulation: Dispatcher Logic
 
-Simulating a worker that respects a rate limit (e.g., 10 SMS/sec) to avoid getting blocked by Twilio.
+Simulating the core worker logic that routes messages to different providers.
 
 ```python
+import queue
 import time
-import collections
+import threading
 
-class RateLimiter:
-    def __init__(self, calls, period):
-        self.calls = calls
-        self.period = period
-        self.timestamps = collections.deque()
+class NotificationSystem:
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.preferences = {101: ["SMS", "PUSH"], 102: ["EMAIL"]} # Mock DB
 
-    def allow(self):
-        now = time.time()
-        # Remove timestamps older than 'period'
-        while self.timestamps and self.timestamps[0] <= now - self.period:
-            self.timestamps.popleft()
+    def ingest(self, user_id, message, channel):
+        print(f"📥 API: Received {channel} for User {user_id}")
+        self.queue.put({"uid": user_id, "msg": message, "chan": channel})
 
-        if len(self.timestamps) < self.calls:
-            self.timestamps.append(now)
-            return True
-        return False
+    def worker(self):
+        while True:
+            try:
+                task = self.queue.get(timeout=1)
+                self.process(task)
+                self.queue.task_done()
+            except queue.Empty:
+                break # Stop if empty for 1s
 
-# Worker Logic
-limiter = RateLimiter(calls=5, period=1) # 5 calls per second
+    def process(self, task):
+        uid, chan = task['uid'], task['chan']
 
-def process_queue(queue_items):
-    for item in queue_items:
-        while not limiter.allow():
-            print("⏳ Rate Limit Hit. Waiting...")
-            time.sleep(0.1)
+        # 1. Check Preferences
+        allowed_channels = self.preferences.get(uid, [])
+        if chan not in allowed_channels:
+            print(f"   ⛔ Blocked: User {uid} opted out of {chan}")
+            return
 
-        print(f"🚀 Sending: {item}")
-        # Call External API here
+        # 2. Mock Sending
+        if chan == "SMS":
+            print(f"   📱 [Twilio] Sent to {uid}: {task['msg']}")
+        elif chan == "EMAIL":
+            print(f"   📧 [SendGrid] Sent to {uid}: {task['msg']}")
+        elif chan == "PUSH":
+            print(f"   🔔 [FCM] Sent to {uid}: {task['msg']}")
 
-process_queue([f"Msg {i}" for i in range(10)])
+if __name__ == "__main__":
+    system = NotificationSystem()
+
+    # Start Worker
+    threading.Thread(target=system.worker).start()
+
+    # Send Requests
+    system.ingest(101, "Your OTP is 9988", "SMS")  # Allowed
+    system.ingest(101, "Buy Now!", "EMAIL")        # Blocked (Opt-out)
+    system.ingest(102, "Welcome!", "EMAIL")        # Allowed
+```
+
+**Output:**
+```
+📥 API: Received SMS for User 101
+📥 API: Received EMAIL for User 101
+📥 API: Received EMAIL for User 102
+   📱 [Twilio] Sent to 101: Your OTP is 9988
+   ⛔ Blocked: User 101 opted out of EMAIL
+   📧 [SendGrid] Sent to 102: Welcome!
 ```
 
 ---
 
-## 🧠 Deep Dive: Deduplication & Ordering
-*   **Dedupe**: If a worker crashes after sending to Twilio but before Ack-ing to Kafka, the message is re-processed.
-    *   *Fix*: Check `notification_id` in DB `status` table before sending.
-*   **Ordering**: Not critical for most notifications.
+## 🧠 Interview Nuances
+
+### 1. How to prevent spamming users?
+*   **Rate Limiting**: Implement a check in the worker using Redis.
+    *   Key: `rate_limit:user_123:sms` -> Value: `count`. Expiry: `1 hour`.
+    *   If count > 5, drop message.
+
+### 2. Deduplication?
+*   If the Producer retries and sends the same "Welcome Email" twice.
+*   Use a `msg_id` to deduplicate in Redis before sending.
+
+### 3. Analytics (Tracking Open Rates)?
+*   For Email: Embed a 1x1 transparent pixel image `<img src="tracking.com/open?id=123">`.
+*   For Links: Wrap links with a URL Shortener to track clicks.
 
 ---
 
 ## ⚡ Flashcards
-1.  **Why use queues?**
-    *   To decouple the ingestion (fast) from the processing (slow external API calls). Prevents system crash during spikes.
-2.  **How to handle Third-Party failures?**
-    *   **Retry with Exponential Backoff**. If Twilio is down, wait 2s, 4s, 8s... then move to DLQ (Dead Letter Queue).
-3.  **Hard vs Soft Bounce in Email?**
-    *   **Hard**: Email invalid (doesn't exist). Stop sending immediately.
-    *   **Soft**: Temporary issue (inbox full). Retry later.
+1.  **What is Exponential Backoff?**
+    *   Waiting longer between retries (1s, 2s, 4s, 8s) to avoid hammering a failing service.
+2.  **Why prioritize OTPs over Marketing?**
+    *   OTP blocks the user (Login). Marketing is optional. Use separate queues.
+3.  **Push vs Pull for Notification Service?**
+    *   The Notification Service acts as a **Push** system to the end user, but internally it **Pulls** from the Kafka queue.

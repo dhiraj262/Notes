@@ -1,111 +1,136 @@
-# Day 40: Distributed Transactions (Saga Pattern)
+# Day 40: Distributed Transactions
 
 ## 🎯 Goal
-Understand how to maintain data consistency across multiple microservices without a global lock.
-**Focus**: ACID vs BASE, Two-Phase Commit (2PC), and the Saga Pattern.
+Understand how to maintain data consistency across multiple microservices/databases.
+**Focus**: The impossibility of ACID across services and the alternatives (2PC, Sagas).
 
 ---
 
 ## 🧩 Key Concepts
 
 ### 1. The Problem
-*   **Monolith**: `BEGIN TRANSACTION` -> Update Order Table -> Update Payment Table -> `COMMIT`. Easy (ACID).
-*   **Microservices**: "Order Service" has its own DB. "Payment Service" has its own DB. You cannot run a single ACID transaction across them.
+In a Monolith, `BEGIN TRANSACTION ... COMMIT` is easy.
+In Microservices, Service A writes to DB1, Service B writes to DB2. There is no magic "Global Commit".
+If Service A commits but Service B fails, data is inconsistent.
 
-### 2. Two-Phase Commit (2PC) - The "Old" Way
-*   **Phase 1 (Prepare)**: Coordinator asks all services: "Can you commit?" Services lock rows.
-*   **Phase 2 (Commit)**: If all say "Yes", Coordinator says "Commit". If one says "No", Coordinator says "Rollback".
-*   **Problem**: **Blocking**. If Coordinator dies, services are stuck holding locks. Not scalable.
+### 2. Two-Phase Commit (2PC) - The "Strong" Way
+*   **Coordinator**: A central node asks everyone "Can you commit?"
+*   **Phase 1 (Prepare)**: Coordinator asks A and B. They lock rows and vote "Yes".
+*   **Phase 2 (Commit)**: If all Yes, Coordinator says "Commit". If any No, "Abort".
+*   **Pros**: Strong Consistency (ACID).
+*   **Cons**:
+    *   **Blocking**: Everyone waits. Locks held for a long time.
+    *   **SPOF**: If Coordinator dies, everyone is stuck.
+    *   **Performance**: Very slow. Avoid in high-scale systems.
 
-### 3. Saga Pattern - The "New" Way
-*   Break the transaction into a sequence of **local transactions**.
-*   T1 (Order) -> T2 (Payment) -> T3 (Inventory).
-*   If T2 fails, execute **Compensating Transactions** (Undo operations) in reverse.
-*   C2 (Refund Payment) -> C1 (Cancel Order).
-
----
-
-## 🏗️ Saga Choreography vs Orchestration
-
-### A. Choreography (Event-Based)
-*   Services talk to each other via events.
-*   *Order Service*: "Order Created" -> *Payment Service* listens, processes, emits "Payment Processed" -> *Inventory Service* listens...
-*   **Pros**: Simple, loose coupling.
-*   **Cons**: "Cyclic dependencies" risk. Hard to visualize the whole flow.
-
-### B. Orchestration (Command-Based)
-*   A central **Orchestrator** (State Machine) tells services what to do.
-*   *Orchestrator*: Call Order Service -> Wait -> Call Payment Service -> Wait...
-*   **Pros**: Central control, easy to handle timeouts/retries.
-*   **Cons**: SPOF (Single Point of Failure) if orchestrator isn't highly available.
+### 3. Sagas - The "Eventual" Way
+*   **Concept**: Break a long transaction into a sequence of local transactions.
+*   **Compensation**: If Step 3 fails, run "Compensating Transactions" to undo Step 2 and Step 1.
+    *   *Example*: `Book Hotel` -> `Book Flight` -> `Charge Card`.
+    *   *Failure*: Card Declined.
+    *   *Compensation*: `Refund Flight` -> `Cancel Hotel`.
+*   **Types**:
+    *   **Choreography**: Events trigger next steps (No central boss).
+    *   **Orchestration**: A central "Saga Coordinator" tells services what to do.
 
 ---
 
-## 💻 Code Simulation: Saga Logic (Orchestration)
+## 💻 Code Simulation: Saga (Orchestration)
 
-Pseudo-code representing a Saga Orchestrator.
+Simulating a Travel Booking Saga where the final Payment step fails, triggering a rollback.
 
 ```python
-class OrderSaga:
-    def execute(self, order_data):
-        try:
-            # Step 1: Create Order
-            order_id = OrderService.create_order(order_data)
+# Simulation of a Saga Orchestrator
 
-            try:
-                # Step 2: Charge Payment
-                payment_id = PaymentService.charge(order_id, order_data['amount'])
+class Service:
+    def __init__(self, name):
+        self.name = name
 
-                try:
-                    # Step 3: Reserve Inventory
-                    InventoryService.reserve(order_id, order_data['items'])
-                    print("✅ Transaction Successful")
+    def execute(self, txn_id):
+        # In real life, this is an API call
+        print(f"✅ {self.name}: Reserved/Committed for {txn_id}")
+        return True
 
-                except InventoryException:
-                    # Compensate Step 2
-                    PaymentService.refund(payment_id)
-                    raise
+    def compensate(self, txn_id):
+        # The 'Undo' operation
+        print(f"↩️ {self.name}: Canceled/Refunded {txn_id}")
 
-            except PaymentException:
-                # Compensate Step 1
-                OrderService.cancel(order_id)
-                raise
+class PaymentService(Service):
+    def execute(self, txn_id):
+        print(f"❌ {self.name}: Failed (Insufficient Funds) for {txn_id}")
+        return False # Triggers rollback
 
-        except Exception as e:
-            print(f"❌ Transaction Failed: {e}")
+class SagaOrchestrator:
+    def __init__(self):
+        self.steps = [] # List of {service, done_flag}
+
+    def add_step(self, service):
+        self.steps.append({"service": service, "done": False})
+
+    def run(self, txn_id):
+        print(f"--- Starting Saga {txn_id} ---")
+        success = True
+
+        # 1. Forward Phase
+        for step in self.steps:
+            service = step["service"]
+            if service.execute(txn_id):
+                step["done"] = True
+            else:
+                success = False
+                break # Stop and rollback
+
+        if success:
+            print("🎉 Saga Complete!")
+        else:
+            print("⚠️ Failure detected! Starting Compensation...")
+            self.rollback(txn_id)
+
+    def rollback(self, txn_id):
+        # 2. Backward Phase (Compensate in reverse order)
+        for step in reversed(self.steps):
+            if step["done"]:
+                step["service"].compensate(txn_id)
+
+if __name__ == "__main__":
+    # Setup
+    hotel = Service("Hotel")
+    flight = Service("Flight")
+    payment = PaymentService("Payment") # This one fails
+
+    saga = SagaOrchestrator()
+    saga.add_step(hotel)
+    saga.add_step(flight)
+    saga.add_step(payment)
+
+    saga.run("TRIP-999")
+```
+
+**Output:**
+```
+--- Starting Saga TRIP-999 ---
+✅ Hotel: Reserved/Committed for TRIP-999
+✅ Flight: Reserved/Committed for TRIP-999
+❌ Payment: Failed (Insufficient Funds) for TRIP-999
+⚠️ Failure detected! Starting Compensation...
+↩️ Flight: Canceled/Refunded TRIP-999
+↩️ Hotel: Canceled/Refunded TRIP-999
 ```
 
 ---
 
-## 🧠 Diagram: Choreography
-
-```mermaid
-sequenceDiagram
-    participant Order
-    participant Payment
-    participant Inventory
-
-    Order->>Payment: Event: OrderCreated
-    alt Payment Success
-        Payment->>Inventory: Event: PaymentAuth
-        alt Inventory Success
-            Inventory->>Order: Event: ShippingScheduled
-        else Inventory Fail
-            Inventory->>Payment: Event: StockMissing
-            Payment->>Order: Event: RefundIssued
-        end
-    else Payment Fail
-        Payment->>Order: Event: PaymentFailed
-    end
-```
+## ⚠️ The Trap: "I need 2PC for Payments"
+*   **Trap**: Thinking you need ACID for everything.
+*   **Reality**: Even banks use Sagas (Eventual Consistency). If a transfer fails, they issue a "Reversing Entry" (Compensation). They don't lock the whole world.
+*   **Exception**: Inside a *single* database (e.g., deducting balance and adding entry), ACID is fine. Across banks, it's Sagas.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is a Compensating Transaction?**
-    *   An operation that undoes the effect of a previous step in a Saga. (e.g., "Refund" is the compensation for "Charge"). It must be **Idempotent**.
-2.  **ACID vs BASE?**
-    *   **ACID**: Atomicity, Consistency, Isolation, Durability (Strong consistency, Monoliths).
-    *   **BASE**: Basically Available, Soft state, Eventual consistency (Distributed Systems).
-3.  **What if the Compensating Transaction fails?**
-    *   Retries! The system must ensure compensation eventually succeeds. Human intervention might be required if it fails permanently.
+
+1.  **What is the main drawback of 2PC?**
+    *   It is a blocking protocol. If one participant is slow, everyone waits.
+2.  **What is a "Pivot Transaction" in a Saga?**
+    *   The point of no return. Steps before it can be compensated. Steps after it should be retriable (guaranteed to succeed).
+3.  **Choreography vs Orchestration?**
+    *   Choreography is decentralized (good for simple flows). Orchestration is centralized (good for complex flows with many steps).
