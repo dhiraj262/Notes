@@ -3,158 +3,196 @@ import json
 import re
 
 class MockBrowser:
+    """
+    Simulates a Headless Browser (like Playwright).
+    It manages a virtual DOM and allows navigation and interaction.
+    """
     def __init__(self):
         self.current_url = "about:blank"
-        # Simulated "Internet"
-        self.pages = {
-            "https://www.google.com": {
-                "title": "Google",
+        self.last_typed_search = ""
+        # simulated_web_pages maps URL -> Content
+        self.simulated_web_pages = {
+            "https://www.shop-ai.com": {
+                "title": "Shop AI - Home",
                 "elements": [
-                    {"id": 1, "type": "input", "name": "q", "value": "", "placeholder": "Search Google"},
-                    {"id": 2, "type": "button", "name": "btnK", "text": "Google Search"}
+                    {"id": 1, "type": "input", "name": "search", "placeholder": "Search products..."},
+                    {"id": 2, "type": "button", "text": "Search", "action": "submit_search"},
                 ]
             },
-            "https://www.google.com/search?q=DeepSeek": {
-                "title": "DeepSeek - Google Search",
+            "https://www.shop-ai.com/search?q=laptop": {
+                "title": "Search Results - Laptop",
                 "elements": [
-                    {"id": 3, "type": "link", "text": "DeepSeek - Incentivizing Reasoning", "href": "https://deepseek.com"},
-                    {"id": 4, "type": "link", "text": "DeepSeek GitHub", "href": "https://github.com/deepseek-ai"}
+                    {"id": 3, "type": "link", "text": "SuperFast Laptop X1 - $999", "href": "/product/laptop-x1"},
+                    {"id": 4, "type": "link", "text": "Budget ChromeBook - $299", "href": "/product/chromebook"},
                 ]
             },
-            "https://deepseek.com": {
-                "title": "DeepSeek Homepage",
+            "https://www.shop-ai.com/product/laptop-x1": {
+                "title": "SuperFast Laptop X1",
                 "elements": [
-                    {"id": 5, "type": "text", "content": "Welcome to DeepSeek AI."},
-                    {"id": 6, "type": "button", "text": "Get Started"}
+                    {"id": 5, "type": "text", "content": "Price: $999. In Stock."},
+                    {"id": 6, "type": "button", "text": "Add to Cart", "action": "add_to_cart"},
+                ]
+            },
+            "https://www.shop-ai.com/cart": {
+                "title": "Your Cart",
+                "elements": [
+                    {"id": 7, "type": "text", "content": "1x SuperFast Laptop X1"},
+                    {"id": 8, "type": "button", "text": "Checkout", "action": "checkout"},
                 ]
             }
         }
-        self.current_dom = []
+        self.history = []
+        self.cart = []
 
     def navigate(self, url):
-        print(f"\n[Browser] Navigating to: {url}")
-        if url in self.pages:
+        print(f"🌐 [Browser] Navigating to: {url}")
+        if url in self.simulated_web_pages:
             self.current_url = url
-            self.current_dom = self.pages[url]["elements"]
             return True
-        else:
-            print(f"[Browser] 404 Not Found: {url}")
-            return False
+        elif url.startswith("/"):
+            # Handle relative paths
+            base = "https://www.shop-ai.com"
+            full_url = base + url
+            if full_url in self.simulated_web_pages:
+                self.current_url = full_url
+                return True
+
+        print(f"❌ [Browser] 404 Not Found: {url}")
+        return False
 
     def get_state(self):
-        """Returns a simplified Accessibility Tree representation."""
-        state = f"URL: {self.current_url}\nTitle: {self.pages.get(self.current_url, {}).get('title', 'Unknown')}\nInteractive Elements:\n"
-        for el in self.current_dom:
-            if el["type"] == "input":
-                state += f"[{el['id']}] Input (name={el.get('name')}, value='{el.get('value')}')\n"
-            elif el["type"] == "button":
-                state += f"[{el['id']}] Button (text='{el.get('text')}')\n"
-            elif el["type"] == "link":
-                state += f"[{el['id']}] Link (text='{el.get('text')}')\n"
-            elif el["type"] == "text":
-                state += f"    Text: {el.get('content')}\n"
-        return state
+        """Returns the 'Accessibility Tree' (simplified DOM) for the LLM."""
+        page = self.simulated_web_pages.get(self.current_url)
+        if not page:
+            return "Page not found."
+
+        state_desc = f"URL: {self.current_url}\nTitle: {page['title']}\nInteractive Elements:\n"
+        for el in page['elements']:
+            if el['type'] == 'input':
+                # Show value if typed
+                value_str = f" [Value: '{self.last_typed_search}']" if el.get('name') == 'search' and self.last_typed_search else ""
+                state_desc += f"[{el['id']}] Input: {el.get('placeholder', '')} (Name: {el.get('name')}){value_str}\n"
+            elif el['type'] == 'button':
+                state_desc += f"[{el['id']}] Button: {el.get('text')}\n"
+            elif el['type'] == 'link':
+                state_desc += f"[{el['id']}] Link: {el.get('text')}\n"
+            elif el['type'] == 'text':
+                state_desc += f"Text: {el.get('content')}\n"
+        return state_desc
 
     def type_text(self, element_id, text):
-        print(f"[Browser] Typing '{text}' into Element [{element_id}]")
-        for el in self.current_dom:
-            if el["id"] == element_id and el["type"] == "input":
-                el["value"] = text
+        print(f"⌨️ [Browser] Typing '{text}' into Element [{element_id}]")
+        # In a real browser, this would update the DOM value.
+        # Here we just simulate the side effect if it's the search bar.
+        page = self.simulated_web_pages[self.current_url]
+        for el in page['elements']:
+            if el['id'] == element_id and el.get('name') == 'search':
+                self.last_typed_search = text
                 return True
         return False
 
     def click(self, element_id):
-        print(f"[Browser] Clicking Element [{element_id}]")
-        # Logic to handle transitions based on clicks
-        element = next((el for el in self.current_dom if el["id"] == element_id), None)
-        if not element:
-            return False
-
-        if self.current_url == "https://www.google.com":
-            if element["name"] == "btnK":
-                # Check if input has value
-                search_input = next((el for el in self.current_dom if el["name"] == "q"), None)
-                if search_input and search_input["value"] == "DeepSeek":
-                    self.navigate("https://www.google.com/search?q=DeepSeek")
-                    return True
-
-        elif self.current_url == "https://www.google.com/search?q=DeepSeek":
-            if "href" in element:
-                self.navigate(element["href"])
-                return True
-
-        return True
+        print(f"🖱️ [Browser] Clicking Element [{element_id}]")
+        page = self.simulated_web_pages[self.current_url]
+        for el in page['elements']:
+            if el['id'] == element_id:
+                if el['type'] == 'link':
+                    return self.navigate(el['href'])
+                elif el['type'] == 'button':
+                    action = el.get('action')
+                    if action == 'submit_search':
+                        query = getattr(self, 'last_typed_search', 'laptop') # Default if not typed
+                        return self.navigate(f"https://www.shop-ai.com/search?q={query}")
+                    elif action == 'add_to_cart':
+                        print("🛒 [Browser] Item added to cart!")
+                        self.cart.append("Laptop X1")
+                        return self.navigate("https://www.shop-ai.com/cart")
+                    elif action == 'checkout':
+                        print("🎉 [Browser] Checkout successful!")
+                        return True
+        return False
 
 class MockLLM:
     """
-    Simulates the AI Agent reasoning.
-    In a real scenario, this would be GPT-4o receiving the state string.
-    Here, we use rule-based logic to mimic the 'thought process'.
+    Simulates the Vision/Reasoning Model (e.g., GPT-4o).
+    It receives the Browser State and decides the next action.
     """
-    def generate_action(self, state, task):
-        print(f"\n[LLM] Thinking... (Task: {task})")
+    def generate_action(self, task, browser_state, history):
+        """
+        In a real scenario, this calls the OpenAI API.
+        Here, we use simple heuristic rules to simulate 'intelligence'.
+        """
+        print("\n🧠 [LLM] Thinking...")
 
-        # Parse state to understand context
-        url_match = re.search(r"URL: (.*)", state)
-        current_url = url_match.group(1) if url_match else ""
+        last_action = history[-1]['action'] if history else None
 
-        # Rule 1: If on Google and search box is empty, type 'DeepSeek'
-        if "google.com" in current_url and "search?q" not in current_url:
-            if "value=''" in state: # Input empty
-                return {"action": "type", "element_id": 1, "text": "DeepSeek"}
-            # Rule 2: If on Google and search box has 'DeepSeek', click Search
-            elif "value='DeepSeek'" in state:
-                return {"action": "click", "element_id": 2}
+        # 1. If we just typed, we should click search
+        if last_action and last_action['action'] == 'type':
+            match = re.search(r'\[(\d+)\] Button: Search', browser_state)
+            if match:
+                return {"action": "click", "id": int(match.group(1))}
 
-        # Rule 3: If on Results page, click the official link
-        if "search?q=DeepSeek" in current_url:
-             return {"action": "click", "element_id": 3} # Click DeepSeek link
+        # 2. If we are at Start Page and haven't typed yet
+        if "Shop AI - Home" in browser_state:
+            if "Value: 'laptop'" not in browser_state: # Check if already typed by looking at state
+                 match = re.search(r'\[(\d+)\] Input', browser_state)
+                 if match:
+                     return {"action": "type", "id": int(match.group(1)), "text": "laptop"}
 
-        # Rule 4: If on DeepSeek page, we are done
-        if "deepseek.com" in current_url and "google" not in current_url:
-             return {"action": "done", "reason": "Navigated to DeepSeek homepage successfully."}
+        # 3. If on Search Results, click the Laptop X1
+        if "Search Results" in browser_state:
+            match = re.search(r'\[(\d+)\] Link: SuperFast Laptop X1', browser_state)
+            if match:
+                return {"action": "click", "id": int(match.group(1))}
 
-        return {"action": "fail", "reason": "No valid action found."}
+        # 4. If on Product Page, Add to Cart
+        if "SuperFast Laptop X1" in browser_state and "Add to Cart" in browser_state:
+            match = re.search(r'\[(\d+)\] Button: Add to Cart', browser_state)
+            if match:
+                return {"action": "click", "id": int(match.group(1))}
+
+        # 5. If in Cart, verify and Finish
+        if "Your Cart" in browser_state:
+            if "1x SuperFast Laptop X1" in browser_state:
+                return {"action": "done", "result": "Successfully added Laptop X1 to cart."}
+
+        return {"action": "error", "message": "I am confused."}
 
 class Agent:
     def __init__(self, task):
         self.task = task
         self.browser = MockBrowser()
         self.llm = MockLLM()
+        self.history = []
 
     def run(self):
-        print(f"--- Starting Agent Task: {self.task} ---")
-        self.browser.navigate("https://www.google.com")
+        print(f"🤖 [Agent] Starting Task: {self.task}")
+        # Initial navigation
+        self.browser.navigate("https://www.shop-ai.com")
 
-        step = 0
-        max_steps = 10
-
-        while step < max_steps:
-            step += 1
-            print(f"\n--- Step {step} ---")
-
-            # 1. Observe
+        for step in range(10): # Max 10 steps
             state = self.browser.get_state()
-            print(f"[Observation]:\n{state.strip()}")
+            print(f"\n--- Step {step + 1} ---")
+            print(state.strip())
 
-            # 2. Think
-            action = self.llm.generate_action(state, self.task)
-            print(f"[Decision]: {json.dumps(action)}")
+            # Ask LLM for next move
+            action_response = self.llm.generate_action(self.task, state, self.history)
 
-            # 3. Act
-            if action["action"] == "type":
-                self.browser.type_text(action["element_id"], action["text"])
-            elif action["action"] == "click":
-                self.browser.click(action["element_id"])
-            elif action["action"] == "done":
-                print(f"\n[Success] {action['reason']}")
-                break
-            elif action["action"] == "fail":
-                print(f"\n[Failure] {action['reason']}")
-                break
+            print(f"⚡ [Action] {action_response}")
+            self.history.append({"state": state, "action": action_response})
+
+            if action_response['action'] == 'done':
+                print(f"\n✅ Task Completed: {action_response['result']}")
+                return
+
+            elif action_response['action'] == 'type':
+                self.browser.type_text(action_response['id'], action_response['text'])
+
+            elif action_response['action'] == 'click':
+                self.browser.click(action_response['id'])
 
             time.sleep(1) # Simulate network/processing delay
 
 if __name__ == "__main__":
-    agent = Agent("Go to DeepSeek homepage")
+    agent = Agent(task="Go to Shop AI, find a laptop, and add it to cart.")
     agent.run()
