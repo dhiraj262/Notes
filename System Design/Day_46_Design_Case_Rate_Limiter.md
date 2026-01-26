@@ -1,194 +1,159 @@
-# Day 46: Design Case - Distributed Rate Limiter
+# Day 46: Design Case - Rate Limiter (Distributed)
 
 ## 🎯 Goal
-Design a system to limit the number of API requests a user can make within a time window (e.g., 10 requests per second).
-**Focus**: Precision, Low Latency, and Distributed Synchronization.
+Design a distributed rate limiter to prevent abuse and ensure system stability.
+**Focus**: Algorithms, Distributed Counting, Race Conditions.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Throttle**: Reject requests if user exceeds limit.
-2.  **Configurable**: Different limits for different APIs (e.g., `POST /order` is 5/sec, `GET /feed` is 100/sec).
-3.  **Response**: Return `HTTP 429 Too Many Requests`.
+1.  **Throttle Requests**: Limit requests based on user_id, IP, or API key.
+2.  **Flexible Rules**: "10 req/sec" or "1000 req/hour".
+3.  **Feedback**: Return HTTP 429 (Too Many Requests) when blocked.
 
 ### Non-Functional
 1.  **Low Latency**: The check must be fast (< 5ms).
-2.  **Distributed**: Works across multiple API servers.
-3.  **High Availability**: The limiter itself shouldn't become a bottleneck.
-
----
-
-## 📐 Capacity Estimation
-*   **Total Traffic**: 1 Million QPS.
-*   **Storage**: Need to store counters for active users.
-    *   If 10M active users in a window.
-    *   Key (UserId) + Value (Count) ≈ 50 Bytes.
-    *   10M * 50B = **500 MB** (Fits easily in Memory/Redis).
+2.  **Accuracy**: Distributed environment should be reasonably accurate.
+3.  **High Availability**: The limiter itself shouldn't become a SPOF.
+4.  **Scalability**: Handle 1M+ active users.
 
 ---
 
 ## 🧠 Core Design Decisions
 
-### 1. Where to Rate Limit?
-*   **Client**: Unreliable. Easily bypassed.
-*   **Application Server**: Hard to sync if you have 100 servers.
-*   **Middleware (Gateway)**: Best place. Centralized check before request hits backend.
+### 1. Where to put the Rate Limiter?
+*   **Client**: Unreliable. Easily forged.
+*   **Server Code**: Hard to scale. Coupled with business logic.
+*   **API Gateway (Middleware)**: **Best**. Centralized control (Nginx, Kong, or custom Microservice).
 
 ### 2. Algorithms
-*   **Token Bucket**: Tokens are added at rate `r`. Request takes a token. Allows bursts.
-*   **Leaky Bucket**: Requests enter queue, processed at constant rate. Smooths traffic.
-*   **Fixed Window**: Count requests in `12:00:00 - 12:00:01`. Problem: Spike at edges (2x limit allowed).
-*   **Sliding Window Log**: Store timestamp of every request. Very accurate but expensive (O(N) memory).
-*   **Sliding Window Counter**: Hybrid. Weighted average of previous and current window.
-    *   **Decision**: **Token Bucket** (for simple throttling) or **Sliding Window Counter** (for strict limits).
+*   **Token Bucket**: Tokens refill at rate `r`. Take token to process. Good for bursts.
+*   **Leaky Bucket**: Requests enter queue, processed at constant rate. Good for smoothing bursts.
+*   **Fixed Window**: "100 reqs in 12:00-12:01". Problem: Spike at edges (200 reqs between 12:00:59 and 12:01:01).
+*   **Sliding Window Log**: Store timestamp of every request. Exact but high memory cost.
+*   **Sliding Window Counter**: Hybrid. Approximates count using previous window weight. **Best Balance**.
 
-### 3. Distributed State (Redis + Lua)
-*   **Race Condition**: Two servers read `count=9`, both increment to `10`. Real count should be `11`.
-*   **Locking**: Too slow.
-*   **Lua Script**: Execute `GET` + `INCR` atomically in Redis.
+### 3. Distributed State Store: Redis
+*   Need shared state for distributed servers.
+*   **Redis**: In-memory, fast.
+*   **Race Conditions**: Reading counter, incrementing, and writing back is not atomic.
+*   **Solution**: Use **Lua Scripts** in Redis to make the `Check-and-Decrement` operation atomic.
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **API Gateway**: Receives request.
-2.  **Rate Limiter Service**: Checks Redis.
-3.  **Redis Cluster**: Stores counters.
-    *   Key: `limiter:{user_id}:{api_endpoint}`.
-    *   Value: `count`.
-    *   TTL: Window size (e.g., 1 min).
+1.  **Client** sends request to **API Gateway**.
+2.  **Rate Limiter Middleware** intercepts.
+3.  **Redis** stores the counters (Key: `limiter:{user_id}`).
+4.  **Lua Script** runs on Redis:
+    *   Get current tokens.
+    *   Refill based on time passed.
+    *   If tokens > 0, decrement and allow.
+    *   Else, deny.
+5.  **Gateway**:
+    *   If Allowed: Pass to Backend Service.
+    *   If Denied: Return HTTP 429.
 
 ---
 
-## 💻 Code Simulation: Sliding Window Counter
+## 💻 Code Simulation: Token Bucket (Local)
 
-Simulating the **Sliding Window Counter** algorithm which approximates the count based on overlap.
+Simulating the core logic of a Token Bucket algorithm.
 
 ```python
 import time
-import math
+import threading
 
-class RateLimiter:
-    """Sliding Window Counter Implementation"""
-    def __init__(self, limit, window_size_sec):
-        self.limit = limit
-        self.window_size = window_size_sec
-        # Storage: user_id -> { "prev_window_count": 0, "curr_window_count": 0, "curr_window_start": timestamp }
-        self.store = {}
+class TokenBucket:
+    def __init__(self, capacity, refill_rate):
+        self.capacity = capacity
+        self.tokens = capacity
+        self.refill_rate = refill_rate # tokens per second
+        self.last_refill = time.time()
+        self.lock = threading.Lock()
 
-    def _get_current_window_start(self):
-        # Round down to nearest window start
+    def _refill(self):
         now = time.time()
-        return math.floor(now / self.window_size) * self.window_size
+        delta = now - self.last_refill
+        tokens_to_add = delta * self.refill_rate
+        self.tokens = min(self.capacity, self.tokens + tokens_to_add)
+        self.last_refill = now
 
-    def allow_request(self, user_id):
-        now = time.time()
-        curr_window_start = self._get_current_window_start()
+    def allow_request(self, tokens=1):
+        with self.lock:
+            self._refill()
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return True
+            return False
 
-        # Init user if not exists
-        if user_id not in self.store:
-            self.store[user_id] = {
-                "prev_count": 0,
-                "curr_count": 0,
-                "window_start": curr_window_start
-            }
+# Simulation
+limiter = TokenBucket(capacity=5, refill_rate=1) # 1 token/sec, Burst 5
 
-        data = self.store[user_id]
-
-        # Check if we moved to a new window
-        if curr_window_start > data["window_start"]:
-            # If 1 window passed, current becomes prev
-            if curr_window_start - data["window_start"] == self.window_size:
-                data["prev_count"] = data["curr_count"]
-            else:
-                # If more than 1 window passed, prev is 0
-                data["prev_count"] = 0
-
-            data["curr_count"] = 0
-            data["window_start"] = curr_window_start
-
-        # Calculate weighted count
-        # Weight = Percent of current window elapsed
-        time_into_current_window = now - curr_window_start
-        weight = time_into_current_window / self.window_size
-
-        # Formula: PrevCount * (1 - Weight) + CurrCount
-        estimated_count = (data["prev_count"] * (1 - weight)) + data["curr_count"]
-
-        if estimated_count < self.limit:
-            data["curr_count"] += 1
-            return True, estimated_count
-        else:
-            return False, estimated_count
+def user_request(user_id, delay=0):
+    time.sleep(delay)
+    if limiter.allow_request():
+        print(f"✅ Request {user_id} Allowed (Tokens left: {limiter.tokens:.2f})")
+    else:
+        print(f"⛔ Request {user_id} Denied (Tokens left: {limiter.tokens:.2f})")
 
 if __name__ == "__main__":
-    # Limit: 5 requests per 10 seconds
-    limiter = RateLimiter(limit=5, window_size_sec=2)
+    print("--- Start Burst (5 allowed) ---")
+    threads = []
+    for i in range(7):
+        t = threading.Thread(target=user_request, args=(i,))
+        threads.append(t)
+        t.start()
 
-    user = "User_123"
+    for t in threads: t.join()
 
-    print("--- Burst 1 (Allowed) ---")
-    for i in range(5):
-        allowed, count = limiter.allow_request(user)
-        print(f"Req {i+1}: Allowed={allowed} (Est Count: {count:.2f})")
-        time.sleep(0.1)
-
-    print("\n--- Burst 2 (Blocked) ---")
-    allowed, count = limiter.allow_request(user)
-    print(f"Req 6: Allowed={allowed} (Est Count: {count:.2f})")
-
-    # Wait for window to slide partially
-    print("\n--- Waiting 1.5s (Window slides) ---")
-    time.sleep(1.5)
-
-    # Now some quota should be freed up
-    allowed, count = limiter.allow_request(user)
-    print(f"Req 7: Allowed={allowed} (Est Count: {count:.2f})")
+    print("\n--- Wait 2 seconds (Refill 2 tokens) ---")
+    time.sleep(2)
+    user_request(99)
 ```
 
 **Output:**
 ```
---- Burst 1 (Allowed) ---
-Req 1: Allowed=True (Est Count: 0.00)
-Req 2: Allowed=True (Est Count: 1.05)
-Req 3: Allowed=True (Est Count: 2.10)
-Req 4: Allowed=True (Est Count: 3.15)
-Req 5: Allowed=True (Est Count: 4.20)
+--- Start Burst (5 allowed) ---
+✅ Request 0 Allowed
+✅ Request 1 Allowed
+✅ Request 2 Allowed
+✅ Request 3 Allowed
+✅ Request 4 Allowed
+⛔ Request 5 Denied
+⛔ Request 6 Denied
 
---- Burst 2 (Blocked) ---
-Req 6: Allowed=False (Est Count: 5.25)
-
---- Waiting 1.5s (Window slides) ---
-Req 7: Allowed=True (Est Count: 3.75)
+--- Wait 2 seconds (Refill 2 tokens) ---
+✅ Request 99 Allowed
 ```
-*(Note: Output values depend on precise timing)*
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. Redis is Down. What happens?
-*   **Fail Open**: Allow all requests. Better to let spammers in than block legitimate users (Availability > Consistency).
-*   **Fail Closed**: Block all requests. Bad UX.
+### 1. Redis is down?
+*   **Fail-Open**: Allow all requests. Better to overload backend slightly than block legitimate users.
+*   **Fail-Closed**: Block all. High security but bad UX.
+*   **Design Choice**: Usually Fail-Open for consumer apps.
 
-### 2. Hard vs Soft Rate Limiting
-*   **Hard**: Strict limit. Returns 429 immediately.
-*   **Soft**: Allow short bursts over the limit, but throttle subsequent requests (delay them).
+### 2. Hard vs Soft Rate Limiting?
+*   **Hard**: Strict cutoff.
+*   **Soft**: Allow overload for short time (bursts).
 
-### 3. HTTP Headers
-*   Always return headers so the client knows their status:
-    *   `X-Ratelimit-Limit`: 100
-    *   `X-Ratelimit-Remaining`: 5
-    *   `X-Ratelimit-Retry-After`: 58 (seconds)
+### 3. Header Standardization
+*   `X-Ratelimit-Limit`: 100
+*   `X-Ratelimit-Remaining`: 99
+*   `X-Ratelimit-Retry-After`: 60 (seconds)
 
 ---
 
 ## ⚡ Flashcards
-1.  **Why is Token Bucket popular?**
-    *   Memory efficient and allows bursts of traffic (e.g., loading a webpage triggers 10 API calls instantly).
-2.  **What is the 'Race Condition' in Rate Limiting?**
-    *   Read-Modify-Write cycle. Fixed using Redis `INCR` or Lua scripts (Atomic).
-3.  **Why use Sliding Window over Fixed Window?**
-    *   Fixed window allows 2x limit at window boundaries. Sliding window is smoother and prevents this loophole.
+1.  **What is the "Thundering Herd" problem?**
+    *   Many clients retrying simultaneously after being rate-limited, causing another spike. Solution: Exponential Backoff + Jitter.
+2.  **Why use Lua with Redis?**
+    *   To ensure atomicity. Executing logic *inside* Redis prevents race conditions between `GET` and `SET`.
+3.  **Token Bucket vs Leaky Bucket?**
+    *   Token Bucket allows **Bursts** (up to capacity). Leaky Bucket enforces **Constant Rate**.
