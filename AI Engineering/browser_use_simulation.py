@@ -1,198 +1,222 @@
-import time
 import json
+import random
 import re
+import time
+from dataclasses import dataclass
+from typing import List, Dict, Optional
+
+# --- 1. MOCK BROWSER INFRASTRUCTURE ---
+
+@dataclass
+class DOMElement:
+    index: int
+    tag: str
+    text: str
+    attributes: Dict[str, str]
+
+    def __repr__(self):
+        # Emulate the "Accessibility Tree" string representation
+        return f"[{self.index}] {self.tag.upper()}: {self.text}"
 
 class MockBrowser:
     """
-    Simulates a Headless Browser (like Playwright).
-    It manages a virtual DOM and allows navigation and interaction.
+    Simulates a Playwright browser instance.
+    Instead of rendering HTML, it maintains a list of 'Actionable Elements'
+    that changes based on interactions.
     """
     def __init__(self):
-        self.current_url = "about:blank"
-        self.last_typed_search = ""
-        # simulated_web_pages maps URL -> Content
-        self.simulated_web_pages = {
-            "https://www.shop-ai.com": {
-                "title": "Shop AI - Home",
-                "elements": [
-                    {"id": 1, "type": "input", "name": "search", "placeholder": "Search products..."},
-                    {"id": 2, "type": "button", "text": "Search", "action": "submit_search"},
-                ]
-            },
-            "https://www.shop-ai.com/search?q=laptop": {
-                "title": "Search Results - Laptop",
-                "elements": [
-                    {"id": 3, "type": "link", "text": "SuperFast Laptop X1 - $999", "href": "/product/laptop-x1"},
-                    {"id": 4, "type": "link", "text": "Budget ChromeBook - $299", "href": "/product/chromebook"},
-                ]
-            },
-            "https://www.shop-ai.com/product/laptop-x1": {
-                "title": "SuperFast Laptop X1",
-                "elements": [
-                    {"id": 5, "type": "text", "content": "Price: $999. In Stock."},
-                    {"id": 6, "type": "button", "text": "Add to Cart", "action": "add_to_cart"},
-                ]
-            },
-            "https://www.shop-ai.com/cart": {
-                "title": "Your Cart",
-                "elements": [
-                    {"id": 7, "type": "text", "content": "1x SuperFast Laptop X1"},
-                    {"id": 8, "type": "button", "text": "Checkout", "action": "checkout"},
-                ]
-            }
-        }
-        self.history = []
-        self.cart = []
+        self.url = "https://www.fake-travel-site.com"
+        self.elements: List[DOMElement] = []
+        self.state_name = "home" # home, search_results, checkout
+        self._refresh_dom()
 
-    def navigate(self, url):
-        print(f"🌐 [Browser] Navigating to: {url}")
-        if url in self.simulated_web_pages:
-            self.current_url = url
-            return True
-        elif url.startswith("/"):
-            # Handle relative paths
-            base = "https://www.shop-ai.com"
-            full_url = base + url
-            if full_url in self.simulated_web_pages:
-                self.current_url = full_url
-                return True
+    def _refresh_dom(self):
+        """Generates a fake DOM based on the current state."""
+        self.elements = []
 
-        print(f"❌ [Browser] 404 Not Found: {url}")
-        return False
+        if self.state_name == "home":
+            self.elements = [
+                DOMElement(1, "button", "One Way", {"selected": "false"}),
+                DOMElement(2, "button", "Round Trip", {"selected": "true"}),
+                DOMElement(3, "input", "From City", {"value": ""}),
+                DOMElement(4, "input", "To City", {"value": ""}),
+                DOMElement(5, "button", "Search Flights", {})
+            ]
+        elif self.state_name == "search_results":
+            self.elements = [
+                DOMElement(10, "text", "Flight AA101 - $300", {}),
+                DOMElement(11, "button", "Select Flight AA101", {}),
+                DOMElement(12, "text", "Flight UA202 - $450", {}),
+                DOMElement(13, "button", "Select Flight UA202", {})
+            ]
+        elif self.state_name == "checkout":
+            self.elements = [
+                DOMElement(20, "text", "Total: $300", {}),
+                DOMElement(21, "input", "Credit Card Number", {"value": ""}),
+                DOMElement(22, "button", "Pay Now", {})
+            ]
 
-    def get_state(self):
-        """Returns the 'Accessibility Tree' (simplified DOM) for the LLM."""
-        page = self.simulated_web_pages.get(self.current_url)
-        if not page:
-            return "Page not found."
+    def get_accessibility_tree(self) -> str:
+        """Returns the text representation of the DOM seen by the LLM."""
+        return "\n".join([str(e) for e in self.elements])
 
-        state_desc = f"URL: {self.current_url}\nTitle: {page['title']}\nInteractive Elements:\n"
-        for el in page['elements']:
-            if el['type'] == 'input':
-                # Show value if typed
-                value_str = f" [Value: '{self.last_typed_search}']" if el.get('name') == 'search' and self.last_typed_search else ""
-                state_desc += f"[{el['id']}] Input: {el.get('placeholder', '')} (Name: {el.get('name')}){value_str}\n"
-            elif el['type'] == 'button':
-                state_desc += f"[{el['id']}] Button: {el.get('text')}\n"
-            elif el['type'] == 'link':
-                state_desc += f"[{el['id']}] Link: {el.get('text')}\n"
-            elif el['type'] == 'text':
-                state_desc += f"Text: {el.get('content')}\n"
-        return state_desc
+    def execute_action(self, action: Dict) -> str:
+        """
+        Simulates the effect of an action on the browser state.
+        Supported actions: click, type
+        """
+        act_type = action.get("action")
+        index = action.get("index")
+        text = action.get("text", "")
 
-    def type_text(self, element_id, text):
-        print(f"⌨️ [Browser] Typing '{text}' into Element [{element_id}]")
-        # In a real browser, this would update the DOM value.
-        # Here we just simulate the side effect if it's the search bar.
-        page = self.simulated_web_pages[self.current_url]
-        for el in page['elements']:
-            if el['id'] == element_id and el.get('name') == 'search':
-                self.last_typed_search = text
-                return True
-        return False
+        # Find element
+        target = next((e for e in self.elements if e.index == index), None)
+        if not target:
+            return f"ERROR: Element [{index}] not found."
 
-    def click(self, element_id):
-        print(f"🖱️ [Browser] Clicking Element [{element_id}]")
-        page = self.simulated_web_pages[self.current_url]
-        for el in page['elements']:
-            if el['id'] == element_id:
-                if el['type'] == 'link':
-                    return self.navigate(el['href'])
-                elif el['type'] == 'button':
-                    action = el.get('action')
-                    if action == 'submit_search':
-                        query = getattr(self, 'last_typed_search', 'laptop') # Default if not typed
-                        return self.navigate(f"https://www.shop-ai.com/search?q={query}")
-                    elif action == 'add_to_cart':
-                        print("🛒 [Browser] Item added to cart!")
-                        self.cart.append("Laptop X1")
-                        return self.navigate("https://www.shop-ai.com/cart")
-                    elif action == 'checkout':
-                        print("🎉 [Browser] Checkout successful!")
-                        return True
-        return False
+        print(f"  [Browser] Executing: {act_type.upper()} on '{target.text}'")
+
+        if act_type == "click":
+            if self.state_name == "home" and target.text == "Search Flights":
+                self.state_name = "search_results"
+                self._refresh_dom()
+                return "Navigated to Search Results."
+            elif self.state_name == "search_results" and "Select" in target.text:
+                self.state_name = "checkout"
+                self._refresh_dom()
+                return "Navigated to Checkout."
+            elif self.state_name == "checkout" and target.text == "Pay Now":
+                return "Payment Processed. Task Complete."
+            return f"Clicked {target.text} (No navigation)."
+
+        elif act_type == "type":
+            target.attributes["value"] = text
+            return f"Typed '{text}' into {target.text}."
+
+        return "Unknown Action."
+
+# --- 2. MOCK LLM (AGENT BRAIN) ---
 
 class MockLLM:
     """
-    Simulates the Vision/Reasoning Model (e.g., GPT-4o).
-    It receives the Browser State and decides the next action.
+    Simulates a Vision/Language Model (e.g., GPT-4o).
+    In a real scenario, this sends the prompt to OpenAI/Anthropic.
+    Here, we use a simple heuristic rule-based system to simulate 'reasoning'.
     """
-    def generate_action(self, task, browser_state, history):
+    def __init__(self):
+        pass
+
+    def predict_action(self, task: str, dom_tree: str) -> Dict:
         """
-        In a real scenario, this calls the OpenAI API.
-        Here, we use simple heuristic rules to simulate 'intelligence'.
+        Decides the next action based on the task and current DOM.
         """
-        print("\n🧠 [LLM] Thinking...")
+        print("\n  [LLM] Thinking...")
 
-        last_action = history[-1]['action'] if history else None
+        # Heuristic Logic to simulate "Reasoning"
+        if "To City" in dom_tree and "Search Flights" in dom_tree:
+            # We are on home page
 
-        # 1. If we just typed, we should click search
-        if last_action and last_action['action'] == 'type':
-            match = re.search(r'\[(\d+)\] Button: Search', browser_state)
-            if match:
-                return {"action": "click", "id": int(match.group(1))}
+            # Check if "To City" is already filled
+            # The DOM string will look like: "[4] INPUT: To City (Value: NYC)" if filled
+            to_city_filled = "Value: NYC" in dom_tree
 
-        # 2. If we are at Start Page and haven't typed yet
-        if "Shop AI - Home" in browser_state:
-            if "Value: 'laptop'" not in browser_state: # Check if already typed by looking at state
-                 match = re.search(r'\[(\d+)\] Input', browser_state)
+            if not to_city_filled:
+                 # Find index of "To City"
+                 match = re.search(r"\[(\d+)\] INPUT: To City", dom_tree)
                  if match:
-                     return {"action": "type", "id": int(match.group(1)), "text": "laptop"}
+                     return {"action": "type", "index": int(match.group(1)), "text": "NYC"}
 
-        # 3. If on Search Results, click the Laptop X1
-        if "Search Results" in browser_state:
-            match = re.search(r'\[(\d+)\] Link: SuperFast Laptop X1', browser_state)
+            # If we already typed, click search.
+            match = re.search(r"\[(\d+)\] BUTTON: Search Flights", dom_tree)
             if match:
-                return {"action": "click", "id": int(match.group(1))}
+                return {"action": "click", "index": int(match.group(1))}
 
-        # 4. If on Product Page, Add to Cart
-        if "SuperFast Laptop X1" in browser_state and "Add to Cart" in browser_state:
-            match = re.search(r'\[(\d+)\] Button: Add to Cart', browser_state)
+        elif "Select Flight" in dom_tree:
+            # We are on results page. Pick the cheap one ($300).
+            match = re.search(r"\[(\d+)\] BUTTON: Select Flight AA101", dom_tree)
             if match:
-                return {"action": "click", "id": int(match.group(1))}
+                return {"action": "click", "index": int(match.group(1))}
 
-        # 5. If in Cart, verify and Finish
-        if "Your Cart" in browser_state:
-            if "1x SuperFast Laptop X1" in browser_state:
-                return {"action": "done", "result": "Successfully added Laptop X1 to cart."}
+        elif "Credit Card" in dom_tree:
+            # Checkout
+            match = re.search(r"\[(\d+)\] BUTTON: Pay Now", dom_tree)
+            if match:
+                return {"action": "click", "index": int(match.group(1))}
 
-        return {"action": "error", "message": "I am confused."}
+        # Fallback random action (should not happen in this controlled sim)
+        return {"action": "wait"}
+
+# --- 3. AGENT ORCHESTRATOR ---
 
 class Agent:
-    def __init__(self, task):
+    def __init__(self, task: str):
         self.task = task
         self.browser = MockBrowser()
         self.llm = MockLLM()
         self.history = []
 
-    def run(self):
-        print(f"🤖 [Agent] Starting Task: {self.task}")
-        # Initial navigation
-        self.browser.navigate("https://www.shop-ai.com")
+    def step(self):
+        """Runs one iteration of the Observe-Think-Act loop."""
+        # 1. Observe
+        dom_tree = self.browser.get_accessibility_tree()
+        print(f"\n--- STATE: {self.browser.state_name.upper()} ---")
+        print(dom_tree)
 
-        for step in range(10): # Max 10 steps
-            state = self.browser.get_state()
-            print(f"\n--- Step {step + 1} ---")
-            print(state.strip())
+        # 2. Think
+        # In a real agent, we'd pass previous history to avoid loops.
+        # For this mock, the LLM state logic handles it partially, but we need to track state changes.
 
-            # Ask LLM for next move
-            action_response = self.llm.generate_action(self.task, state, self.history)
+        # HACK: To simulate sequence on the "Home" page, we need to know if we already typed.
+        # In real Browser Use, the browser state (value="NYC") is visible in the tree.
+        # Let's update MockLLM to look for value="NYC" if I added it to the DOM string.
+        # But my DOM string doesn't show attributes. Let's fix the MockLLM logic or the DOM repr.
 
-            print(f"⚡ [Action] {action_response}")
-            self.history.append({"state": state, "action": action_response})
+        # Let's improve the DOM repr to show values for inputs
+        # (This is dynamic monkey-patching for the simulation logic flow)
+        pass
 
-            if action_response['action'] == 'done':
-                print(f"\n✅ Task Completed: {action_response['result']}")
+        action = self.llm.predict_action(self.task, dom_tree)
+
+        # Simple State Management for the Simulation Loop to progress:
+        # If the LLM suggests typing "NYC", but we are stuck in a loop because the DOM didn't update to show "NYC",
+        # We need to manually force the next step in this mock or make the mock smarter.
+        # Let's make the MockLLM smarter:
+        # If "To City" has no value, Type. If it has value, Click Search.
+        # Wait, the DOMElement repr doesn't show value. Let's update it.
+
+        # 3. Act
+        result = self.browser.execute_action(action)
+        self.history.append((action, result))
+        print(f"  [Result] {result}")
+
+        return result
+
+    def run(self, max_steps=5):
+        print(f"Task: {self.task}")
+        for i in range(max_steps):
+            result = self.step()
+            if "Task Complete" in result:
+                print("\n✅ MISSION ACCOMPLISHED")
                 return
+            time.sleep(0.5)
+        print("\n❌ Max steps reached")
 
-            elif action_response['action'] == 'type':
-                self.browser.type_text(action_response['id'], action_response['text'])
+# Fix DOM Representation to include values (Simulating Browser Use 'verbose' mode)
+def improved_repr(self):
+    base = f"[{self.index}] {self.tag.upper()}: {self.text}"
+    if self.tag == "input" and self.attributes.get("value"):
+        base += f" (Value: {self.attributes['value']})"
+    return base
 
-            elif action_response['action'] == 'click':
-                self.browser.click(action_response['id'])
+DOMElement.__repr__ = improved_repr
 
-            time.sleep(1) # Simulate network/processing delay
 
 if __name__ == "__main__":
-    agent = Agent(task="Go to Shop AI, find a laptop, and add it to cart.")
+    # Simulate a user asking to book a flight
+    agent = Agent("Book the cheapest flight to NYC")
+
+    # We need to guide the MockLLM state a bit better since it's stateless.
+    # The 'run' loop works, but the MockLLM needs to see the effect of previous actions.
+    # Since MockBrowser updates the element attributes in 'type', the 'improved_repr' will show it.
+
     agent.run()
