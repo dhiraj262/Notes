@@ -38,6 +38,20 @@ Design a real-time chat application similar to WhatsApp or Facebook Messenger.
 
 ## 🧠 Core Design Decisions
 
+### 1. Protocol: HTTP vs WebSockets
+*   **HTTP**: Request/Response. Bad for "server pushing" messages to client. Polling is inefficient.
+*   **WebSockets**: Bi-directional, persistent connection. Ideal for chat.
+*   **Decision**: Use **WebSockets** for sending/receiving messages. Use **HTTP/REST** for file uploads, profile updates, and authentication.
+
+### 2. Database: SQL vs NoSQL
+*   We need extremely high write throughput and simple key-value lookups (Get history for Chat ID).
+*   **RDBMS (MySQL/Postgres)**: Hard to scale writes for 20B/day.
+*   **NoSQL (Cassandra/HBase)**: Wide-column stores are perfect for time-series chat logs.
+*   **Decision**: **Cassandra** (or ScyllaDB). Partition Key: `chat_id`, Clustering Key: `timestamp`.
+
+### 3. Message ID Generation
+*   Need global unique ordering? No, only ordering *within* a chat matters.
+*   Can use `Snowflake ID` (64-bit sortable ID) or a local counter per chat.
 ### 1. Communication Protocol: WebSocket
 *   **Polling (HTTP)**: Client asks "Any new msg?" every 2s. High server load, latency.
 *   **Long Polling**: Client waits until server has data. Better, but still header overhead.
