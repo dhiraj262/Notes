@@ -1,138 +1,173 @@
-# Day 49: Design Case - YouTube/Netflix (Video Streaming)
+# Day 49: Design Case - Youtube/Netflix (Video Streaming)
 
 ## 🎯 Goal
-Design a video streaming platform that serves content to millions of concurrent users with low latency.
+Design a video streaming platform where users can upload, view, and share videos.
+**Focus**: Large File Handling, Transcoding, CDNs, and Adaptive Streaming.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Upload**: Users upload videos (1GB - 50GB).
-2.  **Transcoding**: Convert raw video to multiple formats/resolutions (480p, 720p, 1080p, 4K) and codecs (H.264, VP9).
-3.  **Streaming**: Smooth playback, adaptive bitrate (auto-switch quality).
-4.  **Metadata**: Title, Description, Likes.
+1.  **Upload**: Users upload video files (MOV, MP4, AVI).
+2.  **View**: Users watch videos (smooth streaming, no buffering).
+3.  **Search**: Users can search by title.
+4.  **Stats**: View count, Likes.
 
 ### Non-Functional
 1.  **High Availability**: Videos must always be playable.
-2.  **Scalability**: Handle viral videos (millions of views/hour).
-3.  **Latency**: Minimal buffering (Start time < 2s).
+2.  **Scalability**: Support viral videos (Justin Bieber effect).
+3.  **Performance**: Low latency start time.
+4.  **Reliability**: No lost uploads.
 
 ---
 
 ## 📐 Capacity Estimation
-*   **DAU**: 1 Billion (YouTube scale).
-*   **Uploads**: 500 hours of video/minute.
-*   **Storage**: 500 hours * 60 min * 500MB = 15 PB/day. (Needs heavy compression and tiered storage).
-*   **Bandwidth**: Massive. CDN is mandatory.
+*   **DAU**: 100 Million.
+*   **Uploads**: 1 video/user/year -> 300k videos/day.
+*   **Views**: 5 videos/user/day -> 500 Million views/day.
+*   **Storage**:
+    *   Avg video size: 500MB (Source). Transcoded versions: 1GB total.
+    *   Daily: 300k * 1GB = 300 TB/day.
+    *   Bandwidth: Massive. CDN is mandatory.
 
 ---
 
 ## 🧠 Core Design Decisions
 
-### 1. Adaptive Bitrate Streaming (ABS)
-*   **Problem**: Users have different internet speeds (3G vs Fiber). Sending 4K to a 3G phone causes buffering.
-*   **Solution**: **HLS (HTTP Live Streaming)** or **MPEG-DASH**.
-    *   Split video into small chunks (e.g., 5 seconds).
-    *   Encode each chunk in multiple qualities (360p, 720p, 1080p).
-    *   Client downloads chunks based on current bandwidth.
+### 1. Protocols: UDP vs TCP vs HTTP
+*   **UDP**: Fast but loses packets (glitches). Good for live calls (Zoom), bad for Movies.
+*   **TCP**: Reliable but slow (head-of-line blocking).
+*   **HTTP (DASH/HLS)**: **Winner**.
+    *   Videos are chunked into small segments (2-10 seconds).
+    *   Client downloads chunks via HTTP.
+    *   Firewall friendly. CDN friendly.
 
-### 2. Video Upload & Transcoding Pipeline
-*   Uploading a single large file is risky (network fail = restart).
-*   **Solution**:
-    *   Client uses **Pre-signed URL** to upload direct to Object Storage (S3).
-    *   Upload triggers an event (S3 Event -> Lambda/Kafka).
-    *   **Transcoding Service** (Worker Cluster) picks up the job.
-    *   Break video into segments to transcode in parallel (DAG model).
+### 2. Adaptive Bitrate Streaming (ABR)
+*   **Problem**: Users have different internet speeds (4G, 5G, Fiber).
+*   **Solution**: Transcode original video into multiple resolutions (360p, 720p, 1080p, 4K) and bitrates.
+*   Client automatically switches quality based on bandwidth.
 
-### 3. Content Delivery Network (CDN)
-*   You cannot serve 1B users from one data center.
-*   **Strategy**: Cache popular videos (the "head") in CDNs (Edge locations close to user).
-*   **Long Tail**: Less popular videos stay in S3 (Origin) or cold storage (Glacier).
+### 3. Storage: BLOB + CDN
+*   **Original File**: Store in AWS S3 (Glacier for backup).
+*   **Transcoded Files**: Store in S3 (Standard).
+*   **Delivery**: Push popular content to CDNs (Cloudfront/Akamai) at the edge.
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **User** uploads `video.mp4` to S3 (via API Gateway presigned URL).
-2.  **Upload Service** publishes message to `transcode-queue` (Kafka).
-3.  **Transcoder Workers**:
-    *   Download video.
-    *   Split into chunks.
-    *   Convert to 360p, 720p, 1080p.
-    *   Upload chunks back to S3.
-4.  **Metadata Service**: Updates DB (SQL/NoSQL) with `video_url`.
-5.  **User (Viewer)**:
-    *   Requests video.
-    *   Client receives a **Manifest File** (`.m3u8`).
-    *   Client logic: "Net is fast? Get 1080p chunk. Net dropped? Get 360p chunk."
+### Upload Path
+1.  **User** uploads video to `Original Storage` (S3) via Signed URL.
+2.  **Upload Service** updates Metadata DB (Processing status = "Pending").
+3.  **Transcoding Service** (Worker Cluster):
+    *   Pulls video from S3.
+    *   Splits into chunks.
+    *   Encodes to mp4, webm, hls.
+    *   Generates Thumbnail.
+4.  **Completion**: Updates DB (Status = "Ready"). Pushes to CDN.
+
+### Viewing Path
+1.  **User** requests video page.
+2.  **Web Server** returns Metadata (Title, Description) + **Manifest File URL**.
+3.  **Client Player** reads Manifest (list of .ts chunks for different qualities).
+4.  **Client** downloads chunks from nearest **CDN**.
+5.  **Client** adapts quality dynamically.
 
 ---
 
-## 💻 Code Simulation: Manifest Generation
+## 💻 Code Simulation: Adaptive Bitrate Selector
 
-Simulates the output of the Transcoding service: Chunking and Manifest creation.
+Simulating the client-side logic that chooses the next chunk quality based on bandwidth.
 
 ```python
-class VideoProcessor:
-    def __init__(self, video_id, duration):
-        self.video_id = video_id
-        self.duration = duration
-        self.chunks = []
-        self.manifest = ""
+import random
+import time
 
-    def chunk_video(self, chunk_size=5):
-        print(f"🎬 Chunking Video {self.video_id} ({self.duration}s)...")
-        for t in range(0, self.duration, chunk_size):
-            end = min(t + chunk_size, self.duration)
-            chunk_name = f"{self.video_id}_{t}_{end}.ts"
-            self.chunks.append(chunk_name)
-            print(f"   ✂️ Created chunk: {chunk_name}")
+class VideoPlayer:
+    def __init__(self):
+        # Available bitrates in kbps
+        self.qualities = {
+            "360p": 500,
+            "720p": 1500,
+            "1080p": 4000,
+            "4K": 12000
+        }
+        self.buffer = 0 # seconds of video buffered
 
-    def generate_manifest(self):
-        print("\n📄 Generating HLS Manifest...")
-        # Simple HLS format
-        self.manifest = "#EXTM3U\n#EXT-X-VERSION:3\n"
-        for chunk in self.chunks:
-            self.manifest += f"#EXTINF:5.0,\n{chunk}\n"
-        self.manifest += "#EXT-X-ENDLIST"
-        print("✅ Manifest Created:")
-        print(self.manifest)
+    def estimate_bandwidth(self):
+        # Simulate fluctuating network (kbps)
+        return random.randint(300, 8000)
 
-# Simulation Usage
+    def select_quality(self, bandwidth):
+        # Conservative approach: Use 80% of bandwidth
+        safe_bandwidth = bandwidth * 0.8
+
+        selected = "360p" # Default fallback
+        for quality, bitrate in sorted(self.qualities.items(), key=lambda x: x[1]):
+            if bitrate <= safe_bandwidth:
+                selected = quality
+            else:
+                break
+        return selected
+
+    def download_chunk(self):
+        bw = self.estimate_bandwidth()
+        quality = self.select_quality(bw)
+        print(f"📡 Network: {bw} kbps | Choosing: {quality}")
+
+        # Simulate download
+        time.sleep(0.5)
+        self.buffer += 4 # Add 4 seconds to buffer
+
+    def play(self):
+        for i in range(5):
+            self.download_chunk()
+            print(f"   ▶️ Playing... Buffer: {self.buffer}s")
+            self.buffer -= 2 # Consume 2 seconds
+            if self.buffer < 0:
+                print("   ⚠️ Buffering...")
+                self.buffer = 0
+
 if __name__ == "__main__":
-    # Simulate a 15 second video
-    processor = VideoProcessor(video_id="vid_123", duration=15)
+    player = VideoPlayer()
+    player.play()
+```
 
-    # 1. Transcoding Step: Chunking
-    processor.chunk_video(chunk_size=5)
-
-    # 2. Transcoding Step: Create Index
-    processor.generate_manifest()
+**Output:**
+```
+📡 Network: 7200 kbps | Choosing: 1080p
+   ▶️ Playing... Buffer: 4s
+📡 Network: 1200 kbps | Choosing: 360p
+   ▶️ Playing... Buffer: 6s
+📡 Network: 4500 kbps | Choosing: 1080p
+   ▶️ Playing... Buffer: 8s
+...
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. Optimization: Pre-computation vs On-the-fly?
-*   **Transcoding**: Always pre-compute. Too expensive to do on-the-fly.
-*   **Packaging**: Can be done on-the-fly (Packaging raw H.264 into HLS/DASH container) to save storage.
+### 1. How to optimize storage costs?
+*   **Deduplication**: Check hash of uploaded file.
+*   **Cold Storage**: Move unpopular videos to S3 Glacier (cheaper, slower access) after 6 months.
+*   **Codec Efficiency**: Use HEVC (H.265) or AV1 to save 30% bandwidth over H.264.
 
-### 2. DRM (Digital Rights Management)?
-*   If building Netflix, you need Widevine/FairPlay.
-*   Encrypt the video chunks. Key exchange required before playback.
+### 2. Directed Acyclic Graph (DAG) for Transcoding
+*   Video processing is a pipeline: `Upload -> Split -> [Audio Extract, Video Resize, Thumbnail] -> Merge`.
+*   Facebook/Netflix manage this using a DAG scheduler to parallelize tasks.
 
-### 3. How to deduplicate uploads?
-*   User A and User B upload the same viral video.
-*   Calculate Hash (SHA-256) of the file before upload. If exists, just link to existing S3 object.
+### 3. DRM (Digital Rights Management)
+*   Need to encrypt chunks so users can't just download and resell Netflix movies.
+*   Use Widevine/FairPlay.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is a Manifest File?**
-    *   A text file (like `.m3u8` or `.mpd`) that acts as a playlist. It tells the player where the video chunks are and what qualities are available.
-2.  **What is Transcoding?**
-    *   The process of converting a video file from one format/codec to another (e.g., AVI to MP4, 4K to 480p).
-3.  **Why use Pre-signed URLs for upload?**
-    *   To offload the bandwidth from your API servers. The client talks directly to the heavy storage layer (S3), which is designed for high throughput.
+1.  **What is a CDN?**
+    *   Content Delivery Network. A network of servers distributed geographically to deliver content (videos, images) from the location closest to the user.
+2.  **What is HLS?**
+    *   HTTP Live Streaming. An ABR protocol developed by Apple. Splits video into `.ts` files and uses a `.m3u8` playlist.
+3.  **Why split videos into chunks?**
+    *   Allows fast seeking (jump to 50:00 without downloading 0-49:00). Allows switching quality mid-stream.

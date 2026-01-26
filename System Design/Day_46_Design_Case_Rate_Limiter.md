@@ -1,71 +1,67 @@
-# Day 46: Design Case - Distributed Rate Limiter
+# Day 46: Design Case - Rate Limiter (Distributed)
 
 ## 🎯 Goal
-Design a Rate Limiter to prevent abuse and ensure fair usage (e.g., 100 requests/minute per user).
+Design a distributed rate limiter to prevent abuse and ensure system stability.
+**Focus**: Algorithms, Distributed Counting, Race Conditions.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Throttling**: Limit requests based on defined rules (User ID, IP, API Key).
-2.  **Configurable**: Different limits for different APIs (e.g., Write: 10/sec, Read: 1000/sec).
-3.  **Feedback**: Return `429 Too Many Requests` with `Retry-After` header.
+1.  **Throttle Requests**: Limit requests based on user_id, IP, or API key.
+2.  **Flexible Rules**: "10 req/sec" or "1000 req/hour".
+3.  **Feedback**: Return HTTP 429 (Too Many Requests) when blocked.
 
 ### Non-Functional
-1.  **Low Latency**: Decision must be made in < 20ms.
-2.  **Distributed**: Must work across a cluster of API servers.
-3.  **Accuracy**: Should be reasonably accurate (strict locking not required, but don't allow double the limit).
-
----
-
-## 📐 Capacity Estimation
-*   **DAU**: 100 Million.
-*   **Requests**: 10 Billion/day.
-*   **Peak**: ~150k requests/sec.
-*   **Storage**: Need to store counters. Redis is essential for speed.
+1.  **Low Latency**: The check must be fast (< 5ms).
+2.  **Accuracy**: Distributed environment should be reasonably accurate.
+3.  **High Availability**: The limiter itself shouldn't become a SPOF.
+4.  **Scalability**: Handle 1M+ active users.
 
 ---
 
 ## 🧠 Core Design Decisions
 
-### 1. Where to place it?
-*   **Client Side**: Unreliable (can be forged).
-*   **API Gateway**: Best place. Centralized control (Kong, Nginx).
-*   **App Server**: Good for complex logic, but wastes resources if request is rejected late.
-*   **Decision**: **API Gateway** (or a dedicated Middleware).
+### 1. Where to put the Rate Limiter?
+*   **Client**: Unreliable. Easily forged.
+*   **Server Code**: Hard to scale. Coupled with business logic.
+*   **API Gateway (Middleware)**: **Best**. Centralized control (Nginx, Kong, or custom Microservice).
 
-### 2. Algorithm Selection
-*   **Fixed Window**: Reset counter every minute. Problem: Spike at edges (2x limit possible).
-*   **Sliding Window Log**: Store timestamp of every request. Accurate but high memory cost.
-*   **Token Bucket**: Tokens refill at rate `r`. flexible (allows bursts).
-*   **Leaky Bucket**: Queue processes at constant rate. Smooths out traffic (good for write APIs).
-*   **Decision**: **Token Bucket** (Standard for APIs) or **Sliding Window Counter** (Approximation).
+### 2. Algorithms
+*   **Token Bucket**: Tokens refill at rate `r`. Take token to process. Good for bursts.
+*   **Leaky Bucket**: Requests enter queue, processed at constant rate. Good for smoothing bursts.
+*   **Fixed Window**: "100 reqs in 12:00-12:01". Problem: Spike at edges (200 reqs between 12:00:59 and 12:01:01).
+*   **Sliding Window Log**: Store timestamp of every request. Exact but high memory cost.
+*   **Sliding Window Counter**: Hybrid. Approximates count using previous window weight. **Best Balance**.
 
-### 3. Storage
-*   Database is too slow.
-*   **Redis** is perfect. Supports atomic increments (`INCR`) and Expiry (`EXPIRE`).
+### 3. Distributed State Store: Redis
+*   Need shared state for distributed servers.
+*   **Redis**: In-memory, fast.
+*   **Race Conditions**: Reading counter, incrementing, and writing back is not atomic.
+*   **Solution**: Use **Lua Scripts** in Redis to make the `Check-and-Decrement` operation atomic.
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Client** sends request.
-2.  **Load Balancer** routes to API Gateway.
-3.  **Rate Limiter Middleware**:
-    *   Constructs Key: `ratelimit:{user_id}:{endpoint}`.
-    *   Fetches current bucket state from **Redis**.
-    *   If Tokens > 0: Decrement and Forward.
-    *   If Tokens = 0: Return `429`.
-4.  **Race Conditions**:
-    *   Two servers read "Tokens = 1" at the same time. Both decrement.
-    *   **Fix**: Use **Lua Scripts** in Redis to make "Read-Check-Decrement" atomic.
+1.  **Client** sends request to **API Gateway**.
+2.  **Rate Limiter Middleware** intercepts.
+3.  **Redis** stores the counters (Key: `limiter:{user_id}`).
+4.  **Lua Script** runs on Redis:
+    *   Get current tokens.
+    *   Refill based on time passed.
+    *   If tokens > 0, decrement and allow.
+    *   Else, deny.
+5.  **Gateway**:
+    *   If Allowed: Pass to Backend Service.
+    *   If Denied: Return HTTP 429.
 
 ---
 
-## 💻 Code Simulation: Token Bucket Algorithm
+## 💻 Code Simulation: Token Bucket (Local)
 
-A Python implementation of the Token Bucket algorithm (In-Memory).
+Simulating the core logic of a Token Bucket algorithm.
 
 ```python
 import time
@@ -76,89 +72,88 @@ class TokenBucket:
         self.capacity = capacity
         self.tokens = capacity
         self.refill_rate = refill_rate # tokens per second
-        self.last_refill_timestamp = time.time()
+        self.last_refill = time.time()
         self.lock = threading.Lock()
 
     def _refill(self):
         now = time.time()
-        time_passed = now - self.last_refill_timestamp
-        new_tokens = time_passed * self.refill_rate
+        delta = now - self.last_refill
+        tokens_to_add = delta * self.refill_rate
+        self.tokens = min(self.capacity, self.tokens + tokens_to_add)
+        self.last_refill = now
 
-        if new_tokens > 0:
-            self.tokens = min(self.capacity, self.tokens + new_tokens)
-            self.last_refill_timestamp = now
-
-    def allow_request(self, tokens_needed=1):
+    def allow_request(self, tokens=1):
         with self.lock:
             self._refill()
-            if self.tokens >= tokens_needed:
-                self.tokens -= tokens_needed
+            if self.tokens >= tokens:
+                self.tokens -= tokens
                 return True
-            else:
-                return False
+            return False
 
-# Simulation Usage
+# Simulation
+limiter = TokenBucket(capacity=5, refill_rate=1) # 1 token/sec, Burst 5
+
+def user_request(user_id, delay=0):
+    time.sleep(delay)
+    if limiter.allow_request():
+        print(f"✅ Request {user_id} Allowed (Tokens left: {limiter.tokens:.2f})")
+    else:
+        print(f"⛔ Request {user_id} Denied (Tokens left: {limiter.tokens:.2f})")
+
 if __name__ == "__main__":
-    # Capacity 5, Refill 1 token/sec
-    bucket = TokenBucket(capacity=5, refill_rate=1)
+    print("--- Start Burst (5 allowed) ---")
+    threads = []
+    for i in range(7):
+        t = threading.Thread(target=user_request, args=(i,))
+        threads.append(t)
+        t.start()
 
-    print("🚀 Starting Burst traffic...")
-    # Simulate burst of 10 requests
-    for i in range(1, 11):
-        allowed = bucket.allow_request()
-        status = "✅ Passed" if allowed else "⛔ Rate Limited"
-        print(f"Request {i}: {status} (Tokens left: {bucket.tokens:.2f})")
-        time.sleep(0.1)
+    for t in threads: t.join()
 
-    print("\n⏳ Waiting 3 seconds for refill...")
-    time.sleep(3)
+    print("\n--- Wait 2 seconds (Refill 2 tokens) ---")
+    time.sleep(2)
+    user_request(99)
+```
 
-    print("🚀 Retrying...")
-    if bucket.allow_request():
-        print(f"Request 11: ✅ Passed (Tokens left: {bucket.tokens:.2f})")
+**Output:**
+```
+--- Start Burst (5 allowed) ---
+✅ Request 0 Allowed
+✅ Request 1 Allowed
+✅ Request 2 Allowed
+✅ Request 3 Allowed
+✅ Request 4 Allowed
+⛔ Request 5 Denied
+⛔ Request 6 Denied
+
+--- Wait 2 seconds (Refill 2 tokens) ---
+✅ Request 99 Allowed
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. How to handle Distributed Race Conditions?
-*   Problem: Read-Modify-Write cycle in Redis is not atomic.
-*   Solution: **Redis Lua Script**.
-    ```lua
-    -- Lua script for Token Bucket
-    local key = KEYS[1]
-    local capacity = tonumber(ARGV[1])
-    local rate = tonumber(ARGV[2])
-    local now = tonumber(ARGV[3])
+### 1. Redis is down?
+*   **Fail-Open**: Allow all requests. Better to overload backend slightly than block legitimate users.
+*   **Fail-Closed**: Block all. High security but bad UX.
+*   **Design Choice**: Usually Fail-Open for consumer apps.
 
-    local tokens = tonumber(redis.call("get", key) or capacity)
-    local last_refill = tonumber(redis.call("get", key.."_ts") or now)
-
-    local delta = math.max(0, now - last_refill) * rate
-    tokens = math.min(capacity, tokens + delta)
-
-    if tokens >= 1 then
-        redis.call("set", key, tokens - 1)
-        redis.call("set", key.."_ts", now)
-        return 1 -- Allowed
-    else
-        redis.call("set", key.."_ts", now)
-        return 0 -- Rejected
-    end
-    ```
-
-### 2. Soft vs Hard Rate Limiting?
+### 2. Hard vs Soft Rate Limiting?
 *   **Hard**: Strict cutoff.
-*   **Soft**: Allow short bursts over limit, or serve degraded content.
+*   **Soft**: Allow overload for short time (bursts).
+
+### 3. Header Standardization
+*   `X-Ratelimit-Limit`: 100
+*   `X-Ratelimit-Remaining`: 99
+*   `X-Ratelimit-Retry-After`: 60 (seconds)
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is the "Thundering Herd" problem in Rate Limiting?**
-    *   When many users get rate-limited and all retry at the exact same second (e.g., when the minute rolls over). Solution: Add **Jitter** (random delay) to retries.
+1.  **What is the "Thundering Herd" problem?**
+    *   Many clients retrying simultaneously after being rate-limited, causing another spike. Solution: Exponential Backoff + Jitter.
 2.  **Why use Lua with Redis?**
-    *   Lua scripts execute atomically on the Redis server, preventing race conditions between checking a value and updating it.
+    *   To ensure atomicity. Executing logic *inside* Redis prevents race conditions between `GET` and `SET`.
 3.  **Token Bucket vs Leaky Bucket?**
-    *   **Token**: Allows bursts (good for user interaction).
-    *   **Leaky**: Enforces constant rate (good for protecting DBs/Queues).
+    *   Token Bucket allows **Bursts** (up to capacity). Leaky Bucket enforces **Constant Rate**.
