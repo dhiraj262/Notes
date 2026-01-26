@@ -1,217 +1,160 @@
-"""
-Browser Use Simulation
-----------------------
-This script simulates the core logic of the 'browser-use' library:
-1. An Agent that loops through Observe -> Reason -> Act.
-2. A Mock Browser that returns a text-based representation of a webpage (like an Accessibility Tree).
-3. A Mock LLM that "sees" the text state and decides the next action.
-
-This runs with ZERO external dependencies (standard library only).
-"""
-
-import json
 import time
-from typing import Dict, List, Any, Optional
-
-# --- 1. The Mock Browser (Playwright Replacement) ---
+import json
+import re
 
 class MockBrowser:
-    """
-    Simulates a Headless Browser.
-    Instead of rendering HTML, it holds a dictionary of 'Pages', where each page
-    has a list of interactive elements (the 'Accessibility Tree').
-    """
     def __init__(self):
         self.current_url = "about:blank"
-        # The 'internet' is a dictionary of URL -> Element List
+        # Simulated "Internet"
         self.pages = {
-            "https://google.com": {
+            "https://www.google.com": {
                 "title": "Google",
                 "elements": [
-                    {"id": 1, "type": "Input", "name": "Search Query", "value": ""},
-                    {"id": 2, "type": "Button", "name": "Google Search"},
+                    {"id": 1, "type": "input", "name": "q", "value": "", "placeholder": "Search Google"},
+                    {"id": 2, "type": "button", "name": "btnK", "text": "Google Search"}
                 ]
             },
-            "https://google.com/search?q=flights": {
-                "title": "Google Search Results",
+            "https://www.google.com/search?q=DeepSeek": {
+                "title": "DeepSeek - Google Search",
                 "elements": [
-                    {"id": 3, "type": "Link", "name": "Google Flights", "href": "https://flights.google.com"},
-                    {"id": 4, "type": "Link", "name": "Kayak", "href": "https://kayak.com"},
+                    {"id": 3, "type": "link", "text": "DeepSeek - Incentivizing Reasoning", "href": "https://deepseek.com"},
+                    {"id": 4, "type": "link", "text": "DeepSeek GitHub", "href": "https://github.com/deepseek-ai"}
                 ]
             },
-            "https://flights.google.com": {
-                "title": "Google Flights",
+            "https://deepseek.com": {
+                "title": "DeepSeek Homepage",
                 "elements": [
-                    {"id": 5, "type": "Input", "name": "From", "value": "New York"},
-                    {"id": 6, "type": "Input", "name": "To", "value": ""},
-                    {"id": 7, "type": "Button", "name": "Search Flights"},
-                ]
-            },
-            "https://flights.google.com/results": {
-                "title": "Flight Results",
-                "elements": [
-                    {"id": 8, "type": "Text", "content": "Flight 1: $300 (United)"},
-                    {"id": 9, "type": "Button", "name": "Book Flight 1"},
-                    {"id": 10, "type": "Text", "content": "Flight 2: $450 (Delta)"},
+                    {"id": 5, "type": "text", "content": "Welcome to DeepSeek AI."},
+                    {"id": 6, "type": "button", "text": "Get Started"}
                 ]
             }
         }
-        self.history = []
+        self.current_dom = []
 
-    def goto(self, url: str):
-        print(f"  [Browser] Navigating to {url}...")
+    def navigate(self, url):
+        print(f"\n[Browser] Navigating to: {url}")
         if url in self.pages:
             self.current_url = url
+            self.current_dom = self.pages[url]["elements"]
             return True
-        print(f"  [Browser] Error: 404 Not Found ({url})")
+        else:
+            print(f"[Browser] 404 Not Found: {url}")
+            return False
+
+    def get_state(self):
+        """Returns a simplified Accessibility Tree representation."""
+        state = f"URL: {self.current_url}\nTitle: {self.pages.get(self.current_url, {}).get('title', 'Unknown')}\nInteractive Elements:\n"
+        for el in self.current_dom:
+            if el["type"] == "input":
+                state += f"[{el['id']}] Input (name={el.get('name')}, value='{el.get('value')}')\n"
+            elif el["type"] == "button":
+                state += f"[{el['id']}] Button (text='{el.get('text')}')\n"
+            elif el["type"] == "link":
+                state += f"[{el['id']}] Link (text='{el.get('text')}')\n"
+            elif el["type"] == "text":
+                state += f"    Text: {el.get('content')}\n"
+        return state
+
+    def type_text(self, element_id, text):
+        print(f"[Browser] Typing '{text}' into Element [{element_id}]")
+        for el in self.current_dom:
+            if el["id"] == element_id and el["type"] == "input":
+                el["value"] = text
+                return True
         return False
 
-    def get_state(self) -> str:
-        """
-        Returns a text representation of the current page's interactive elements.
-        This simulates the 'Vision/Accessibility Tree' extraction.
-        """
-        if self.current_url not in self.pages:
-            return "Error: Page not found."
+    def click(self, element_id):
+        print(f"[Browser] Clicking Element [{element_id}]")
+        # Logic to handle transitions based on clicks
+        element = next((el for el in self.current_dom if el["id"] == element_id), None)
+        if not element:
+            return False
 
-        page_data = self.pages[self.current_url]
-        state_lines = [f"Title: {page_data['title']}", "Interactive Elements:"]
+        if self.current_url == "https://www.google.com":
+            if element["name"] == "btnK":
+                # Check if input has value
+                search_input = next((el for el in self.current_dom if el["name"] == "q"), None)
+                if search_input and search_input["value"] == "DeepSeek":
+                    self.navigate("https://www.google.com/search?q=DeepSeek")
+                    return True
 
-        for el in page_data['elements']:
-            if el['type'] == 'Input':
-                state_lines.append(f"[{el['id']}] Input '{el['name']}': value='{el.get('value', '')}'")
-            elif el['type'] == 'Button':
-                state_lines.append(f"[{el['id']}] Button '{el['name']}'")
-            elif el['type'] == 'Link':
-                state_lines.append(f"[{el['id']}] Link '{el['name']}' (href={el.get('href')})")
-            elif el['type'] == 'Text':
-                state_lines.append(f"     Text: {el['content']}")
+        elif self.current_url == "https://www.google.com/search?q=DeepSeek":
+            if "href" in element:
+                self.navigate(element["href"])
+                return True
 
-        return "\n".join(state_lines)
-
-    def execute_action(self, action: Dict[str, Any]):
-        """
-        Executes a Playwright-style action on the current page.
-        """
-        page_data = self.pages.get(self.current_url)
-        if not page_data:
-            return "Failed: No page loaded"
-
-        act_type = action.get("action")
-        target_id = action.get("id")
-
-        # Find the element
-        target_el = next((el for el in page_data['elements'] if el.get('id') == target_id), None)
-
-        if not target_el:
-            return f"Failed: Element [{target_id}] not found on current page."
-
-        if act_type == "click":
-            print(f"  [Browser] Clicked element [{target_id}] ({target_el.get('name', 'Unknown')})")
-
-            # Simulate navigation if it's a link
-            if target_el['type'] == 'Link':
-                self.goto(target_el['href'])
-            # Simulate state change for specific buttons (Hardcoded logic for simulation)
-            elif target_el['name'] == "Google Search":
-                 # In a real browser, this would be dynamic. Here we mock the transition.
-                 # We assume the input was 'flights' for this demo.
-                 self.goto("https://google.com/search?q=flights")
-            elif target_el['name'] == "Search Flights":
-                self.goto("https://flights.google.com/results")
-            elif target_el['name'].startswith("Book"):
-                print("  [Browser] Booking flow initiated... (Success)")
-                return "Goal Achieved: Flight Booked"
-
-            return "Clicked"
-
-        elif act_type == "type":
-            text = action.get("text")
-            print(f"  [Browser] Typed '{text}' into element [{target_id}]")
-            target_el['value'] = text
-            return f"Typed '{text}'"
-
-        return "Unknown Action"
-
-# --- 2. The Mock LLM (Reasoning Engine) ---
+        return True
 
 class MockLLM:
     """
-    Simulates the Agentic LLM (e.g., GPT-4o).
-    It receives the State (String) and Goal (String), and outputs a JSON action.
+    Simulates the AI Agent reasoning.
+    In a real scenario, this would be GPT-4o receiving the state string.
+    Here, we use rule-based logic to mimic the 'thought process'.
     """
-    def predict_next_action(self, state: str, goal: str) -> Dict[str, Any]:
-        print("\n  [LLM] Thinking...")
-        # Simple heuristic logic to simulate "Intelligence"
+    def generate_action(self, state, task):
+        print(f"\n[LLM] Thinking... (Task: {task})")
 
-        # 1. If on Google Homepage -> Type 'flights' and Search
-        if "Title: Google" in state and "Search Query" in state:
-            # Check if we already typed it
-            if "value=''" in state: # Input is empty
-                return {"action": "type", "id": 1, "text": "flights"}
-            else: # Input has value, click search
-                return {"action": "click", "id": 2}
+        # Parse state to understand context
+        url_match = re.search(r"URL: (.*)", state)
+        current_url = url_match.group(1) if url_match else ""
 
-        # 2. If on Search Results -> Click Google Flights link
-        if "Title: Google Search Results" in state:
-            return {"action": "click", "id": 3}
+        # Rule 1: If on Google and search box is empty, type 'DeepSeek'
+        if "google.com" in current_url and "search?q" not in current_url:
+            if "value=''" in state: # Input empty
+                return {"action": "type", "element_id": 1, "text": "DeepSeek"}
+            # Rule 2: If on Google and search box has 'DeepSeek', click Search
+            elif "value='DeepSeek'" in state:
+                return {"action": "click", "element_id": 2}
 
-        # 3. If on Google Flights -> Fill destination and Search
-        if "Title: Google Flights" in state:
-            if "To': value=''" in state:
-                return {"action": "type", "id": 6, "text": "London"}
-            else:
-                return {"action": "click", "id": 7}
+        # Rule 3: If on Results page, click the official link
+        if "search?q=DeepSeek" in current_url:
+             return {"action": "click", "element_id": 3} # Click DeepSeek link
 
-        # 4. If on Results -> Book the first flight
-        if "Title: Flight Results" in state:
-            return {"action": "click", "id": 9}
+        # Rule 4: If on DeepSeek page, we are done
+        if "deepseek.com" in current_url and "google" not in current_url:
+             return {"action": "done", "reason": "Navigated to DeepSeek homepage successfully."}
 
-        return {"action": "stop", "reason": "I am confused or done."}
+        return {"action": "fail", "reason": "No valid action found."}
 
-# --- 3. The Agent (Controller) ---
-
-class BrowserAgent:
-    def __init__(self, task: str):
+class Agent:
+    def __init__(self, task):
         self.task = task
         self.browser = MockBrowser()
         self.llm = MockLLM()
 
     def run(self):
-        print(f"🤖 Agent Started. Task: '{self.task}'")
-        self.browser.goto("https://google.com") # Start at Google
+        print(f"--- Starting Agent Task: {self.task} ---")
+        self.browser.navigate("https://www.google.com")
 
-        step = 1
+        step = 0
         max_steps = 10
 
-        while step <= max_steps:
+        while step < max_steps:
+            step += 1
             print(f"\n--- Step {step} ---")
 
             # 1. Observe
             state = self.browser.get_state()
-            print(f"[State Observed]:\n{state}")
+            print(f"[Observation]:\n{state.strip()}")
 
-            # 2. Reason
-            action = self.llm.predict_next_action(state, self.task)
-            print(f"[LLM Decision]: {json.dumps(action)}")
-
-            if action.get("action") == "stop":
-                print("🛑 Agent decided to stop.")
-                break
+            # 2. Think
+            action = self.llm.generate_action(state, self.task)
+            print(f"[Decision]: {json.dumps(action)}")
 
             # 3. Act
-            result = self.browser.execute_action(action)
-            print(f"[Execution Result]: {result}")
+            if action["action"] == "type":
+                self.browser.type_text(action["element_id"], action["text"])
+            elif action["action"] == "click":
+                self.browser.click(action["element_id"])
+            elif action["action"] == "done":
+                print(f"\n[Success] {action['reason']}")
+                break
+            elif action["action"] == "fail":
+                print(f"\n[Failure] {action['reason']}")
+                break
 
-            if "Goal Achieved" in result:
-                print("\n🎉 TASK COMPLETED SUCCESSFULLY!")
-                return
-
-            step += 1
-            time.sleep(0.5) # Simulate latency
-
-# --- Main Execution ---
+            time.sleep(1) # Simulate network/processing delay
 
 if __name__ == "__main__":
-    agent = BrowserAgent(task="Find a flight to London")
+    agent = Agent("Go to DeepSeek homepage")
     agent.run()
