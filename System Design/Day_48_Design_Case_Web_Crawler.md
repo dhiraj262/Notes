@@ -1,6 +1,8 @@
 # Day 48: Design Case - Web Crawler
 
 ## 🎯 Goal
+Design a scalable Web Crawler (Google Bot) to index the entire internet.
+**Scale**: 1 Billion pages/month.
 Design a scalable web crawler to download and index the entire web (e.g., Googlebot).
 **Focus**: URL Frontier, Politeness, Deduplication, and Parsing.
 
