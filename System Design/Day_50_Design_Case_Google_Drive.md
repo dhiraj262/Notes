@@ -1,176 +1,186 @@
-# Day 50: Design Case - Google Drive / Dropbox
+# Day 50: Design Case - Google Drive (Cloud Storage)
 
 ## 🎯 Goal
-Design a cloud file storage and synchronization service.
-**Focus**: File Chunking, Deduplication, and Synchronization Consistency.
+Design a file storage and synchronization service like Google Drive, Dropbox, or OneDrive.
+**Focus**: Large file uploads, Data consistency, Deduplication, and Synchronization.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Upload/Download**: Support large files (GBs).
-2.  **Sync**: Automatic synchronization across multiple devices.
+1.  **Add/Delete/Update**: Support basic file operations.
+2.  **Sync**: Automatic synchronization across devices.
 3.  **Versioning**: Restore previous versions of a file.
-4.  **Offline Access**: Support editing offline and syncing when online.
+4.  **Sharing**: Share files/folders with others.
+5.  **Offline Access**: Work offline and sync when online.
 
 ### Non-Functional
-1.  **Reliability**: Never lose data (Durability > Availability).
-2.  **Consistency**: Files must be consistent across devices.
-3.  **Bandwidth Efficiency**: Don't re-upload the whole file if only one word changed.
+1.  **Reliability**: Data durability is paramount (99.999999999% durability).
+2.  **Consistency**: Syncing should be atomic.
+3.  **Bandwidth Usage**: Minimize data transfer (don't re-upload entire 1GB file if 1 byte changed).
 
 ---
 
 ## 📐 Capacity Estimation
-*   **Users**: 1 Billion.
-*   **Storage**: 10 GB per user -> **10 Exabytes** total.
-*   **QPS**: Sync traffic is bursty.
+*   **Users**: 100 Million DAU.
+*   **Storage**: 10GB / user.
+    *   Total: 100M * 10GB = 1 Exabyte (EB).
+*   **QPS**: Not very high compared to Chat, but Bandwidth is high.
 
 ---
 
 ## 🧠 Core Design Decisions
 
-### 1. Handling Large Files
-*   **Problem**: Uploading a 2GB file fails if network drops at 99%.
-*   **Solution**: **Chunking**.
-    *   Split file into 4MB blocks.
-    *   Upload blocks independently.
-    *   Retry only failed blocks.
+### 1. Chunking Files
+*   Uploading a 10GB file as a single blob is risky (network fail = restart).
+*   **Solution**: Split files into fixed-size chunks (e.g., 4MB).
+*   **Benefits**:
+    *   Parallel uploads.
+    *   Retry only failed chunks.
+    *   **Deduplication**.
 
-### 2. Deduplication (Bandwidth & Storage)
-*   **Scenario**: User modifies 1 byte in a 100MB file.
-*   **Naive**: Re-upload 100MB.
-*   **Optimized**: Re-upload only the modified block (4MB).
-*   **Global Deduplication**: If User A uploads "Movie.mp4" and User B uploads the same, store only one copy of the blocks.
+### 2. Deduplication (at Block Level)
+*   User A and User B both upload the same movie.
+*   Instead of storing twice, we calculate hash (SHA-256) of each chunk.
+*   If Hash matches existing chunk in S3, we just point Metadata to it.
+*   **Saves 30-50% storage space**.
 
-### 3. Synchronization (Delta Sync)
-*   Client calculates hashes of all blocks.
-*   Sends list of hashes to server.
-*   Server replies: "I have blocks A, B. Send me C."
-*   Client uploads only block C.
+### 3. Synchronization (Differential Sync)
+*   If user modifies 10 bytes in a 4MB chunk:
+    *   **Rsync algorithm**: Only upload the diffs? (Complex to manage on S3).
+    *   **Chunk replacement**: Just re-upload that specific 4MB chunk. (Simpler).
 
-### 4. Metadata Database
-*   Needs strict ACID properties to maintain file hierarchy and versions.
-*   **SQL Database** (MySQL/PostgreSQL) sharded by `user_id`.
-*   Tables: `Files`, `Versions`, `Blocks`, `User_File_Map`.
+### 4. Database: Metadata vs Block Data
+*   **Block Data**: Immutable. Store in AWS S3 / Azure Blob.
+*   **Metadata**: Highly relational (Folder hierarchy, Permissions). Store in **SQL (MySQL/PostgreSQL)** or NewSQL (CockroachDB).
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Client Application**:
-    *   **Watcher**: Monitors file system events.
-    *   **Chunker**: Splits files.
-    *   **Indexer**: Maintains local state database.
-2.  **Block Server**: Receives raw blocks. Stores in **S3**. Checks deduplication (Hash check).
-3.  **Metadata Server**: Updates file index (e.g., "File.txt version 2 consists of blocks [H1, H2, H3]").
-4.  **Notification Service**: Uses Long Polling / WebSockets to tell other devices "Hey, File.txt changed".
-5.  **Cold Storage (Glacier)**: For old versions (Cost saving).
+1.  **Client Application**: Runs on user's device. Has a "Watcher" to detect file changes.
+2.  **Block Server**: Handles raw data upload.
+    *   Receives chunks -> Computes Hash -> Checks "Block DB" (dedupe) -> Saves to S3.
+3.  **Metadata Server**: Handles file logic.
+    *   Updates "File Table" (File Name, Version, List of Block Hashes).
+4.  **Notification Service**:
+    *   Uses Long Polling / WebSocket.
+    *   Tells other devices "File X has changed".
+5.  **Offline Queue**: If offline, queue changes locally. Sync when online.
+
+**Flow (Upload)**:
+1.  Client splits file `Report.pdf` into Chunk A, Chunk B.
+2.  Client hashes Chunk A. Sends hash to Block Server.
+3.  Server says: "I already have this hash (Dedupe)."
+4.  Client hashes Chunk B. Server says: "Upload it."
+5.  Client uploads Chunk B.
+6.  Client calls Metadata Server: "`Report.pdf` = [Hash A, Hash B]".
 
 ---
 
-## 💻 Code Simulation: Chunking & Deduplication
+## 💻 Code Simulation: File Chunking & Hashing
 
-Simulating how a client splits a file and uploads only new blocks.
+Simulating how a client splits a file and generates hashes for deduplication.
 
 ```python
 import hashlib
+import os
 
-class CloudStorage:
-    def __init__(self):
-        self.block_store = {} # hash -> content
-        self.file_meta = {}   # filename -> [block_hashes]
+class DriveClient:
+    def __init__(self, chunk_size=1024): # 1KB for demo
+        self.chunk_size = chunk_size
 
-    def _get_hash(self, data):
-        return hashlib.sha256(data.encode()).hexdigest()
+    def split_and_hash(self, file_content):
+        """ Simulates reading a file and splitting it into chunks """
+        chunks = []
+        file_hash = hashlib.sha256(file_content).hexdigest()
 
-    def upload_file(self, filename, content):
-        print(f"☁️ Processing '{filename}'...")
+        print(f"📄 Processing File (Total Size: {len(file_content)} bytes)")
 
-        # 1. Chunking (Small size for demo)
-        CHUNK_SIZE = 5
-        chunks = [content[i:i+CHUNK_SIZE] for i in range(0, len(content), CHUNK_SIZE)]
+        for i in range(0, len(file_content), self.chunk_size):
+            chunk = file_content[i:i+self.chunk_size]
+            chunk_hash = hashlib.sha256(chunk).hexdigest()
+            chunks.append({"index": i//self.chunk_size, "hash": chunk_hash, "data": chunk})
 
-        file_hashes = []
-        bytes_uploaded = 0
+        return file_hash, chunks
+
+    def sync(self, filename, content, server_state):
+        file_hash, chunks = self.split_and_hash(content)
+
+        print(f"🔄 Syncing '{filename}'...")
+        metadata = []
 
         for chunk in chunks:
-            h = self._get_hash(chunk)
-            file_hashes.append(h)
-
-            # 2. Check Deduplication
-            if h in self.block_store:
-                print(f"   ♻️ Block {h[:6]} exists. Skipping upload.")
+            if chunk['hash'] in server_state:
+                print(f"   ⏩ Chunk {chunk['index']} exists on server (Deduplicated)")
             else:
-                print(f"   ⬆️ Uploading Block {h[:6]} ('{chunk}')")
-                self.block_store[h] = chunk
-                bytes_uploaded += len(chunk)
+                print(f"   ⬆️ Uploading Chunk {chunk['index']} (Hash: {chunk['hash'][:8]}...)")
+                server_state.add(chunk['hash']) # Mock upload
 
-        self.file_meta[filename] = file_hashes
-        print(f"✅ Uploaded {bytes_uploaded} bytes. Total size: {len(content)} bytes.\n")
+            metadata.append(chunk['hash'])
 
-    def download_file(self, filename):
-        hashes = self.file_meta.get(filename, [])
-        content = "".join([self.block_store[h] for h in hashes])
-        return content
+        print("✅ Sync Complete.\n")
+        return server_state
 
 if __name__ == "__main__":
-    cloud = CloudStorage()
+    client = DriveClient(chunk_size=10) # Tiny chunks for demo
 
-    # Version 1
-    file_v1 = "Hello World Data"
-    cloud.upload_file("my_doc.txt", file_v1)
+    # Mock Server Storage (Set of existing hashes)
+    server_blocks = set()
 
-    # Version 2 (Changed one word)
-    file_v2 = "Hello Mars Data"
-    cloud.upload_file("my_doc.txt", file_v2)
+    # 1. Upload File Version 1
+    content_v1 = b"Hello world. This is a file."
+    server_blocks = client.sync("doc.txt", content_v1, server_blocks)
 
-    print(f"Downloaded: '{cloud.download_file('my_doc.txt')}'")
+    # 2. Modify File (Append data) - Version 2
+    # "Hello world. " (Same) + "This is a file." (Same) + " UPDATE"
+    content_v2 = b"Hello world. This is a file. UPDATE"
+    server_blocks = client.sync("doc.txt", content_v2, server_blocks)
 ```
 
 **Output:**
 ```
-☁️ Processing 'my_doc.txt'...
-   ⬆️ Uploading Block 185f8d ('Hello')
-   ⬆️ Uploading Block d09e01 (' Worl')
-   ⬆️ Uploading Block 482186 ('d Dat')
-   ⬆️ Uploading Block 9c55b7 ('a')
-✅ Uploaded 16 bytes. Total size: 16 bytes.
+📄 Processing File (Total Size: 28 bytes)
+🔄 Syncing 'doc.txt'...
+   ⬆️ Uploading Chunk 0 (Hash: ...)
+   ⬆️ Uploading Chunk 1 (Hash: ...)
+   ⬆️ Uploading Chunk 2 (Hash: ...)
+✅ Sync Complete.
 
-☁️ Processing 'my_doc.txt'...
-   ♻️ Block 185f8d exists. Skipping upload.
-   ⬆️ Uploading Block ffe8e2 (' Mars')
-   ♻️ Block 482186 exists. Skipping upload.
-   ♻️ Block 9c55b7 exists. Skipping upload.
-✅ Uploaded 5 bytes. Total size: 15 bytes.
-
-Downloaded: 'Hello Mars Data'
+📄 Processing File (Total Size: 35 bytes)
+🔄 Syncing 'doc.txt'...
+   ⏩ Chunk 0 exists on server (Deduplicated)
+   ⏩ Chunk 1 exists on server (Deduplicated)
+   ⏩ Chunk 2 exists on server (Deduplicated)
+   ⬆️ Uploading Chunk 3 (Hash: ...)  <-- Only new data uploaded
+✅ Sync Complete.
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. Rolling Hash (Rabin-Karp)
-*   **Problem with Fixed-Size Chunking**: If I insert one character at the start, ALL subsequent blocks shift and change hash. Zero deduplication.
-*   **Solution**: **Rolling Hash**. Finds chunk boundaries based on content patterns, not fixed offsets. Resists insertion shifts.
+### 1. ACID properties?
+*   Metadata updates must be ACID.
+*   Use a Transactional DB. Changing a folder name shouldn't leave half files in old folder.
 
 ### 2. Conflict Resolution
-*   User A and User B edit same file offline. Both come online.
+*   User A and User B modify same file offline, then both go online.
 *   **Strategy**: "Last Write Wins" is bad here.
-*   **Better**: Create a "Conflicted Copy" (File_v1_Conflict_UserB.txt) and let the user merge manually.
+*   **Strategy**: Create "Conflicted Copy" (e.g., `Report (User B's Conflict).pdf`) and let user decide.
 
-### 3. ACID Metadata
-*   Why not NoSQL?
-*   We need strong consistency. If I move a folder, all files inside must move atomically. NoSQL eventually consistent directory structures are confusing for users.
+### 3. Security
+*   Encrypt data at rest (AES-256) and in transit (TLS).
+*   Client-side encryption? (Zero-knowledge privacy). Hard for features like search/preview.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is Differential Synchronization?**
-    *   Syncing only the difference (diff) between two versions of a file (used in Git/Dropbox).
-2.  **Block vs Object Storage?**
-    *   **Block (EBS)**: Fast, OS sees a disk. Good for Databases.
-    *   **Object (S3)**: REST API, Immutable objects. Good for Drive storage.
-3.  **Why Long Polling for Drive?**
-    *   Client keeps a connection open to Metadata server. Server pushes "Change Notification" immediately. Saves battery vs periodic polling.
+1.  **What is Block Storage vs Object Storage?**
+    *   **Block**: Raw disk blocks (HDD/SSD). Fast. Used for OS/Databases.
+    *   **Object**: Store data as immutable objects with metadata (S3). Slower, but massive scale.
+2.  **Why chunk files?**
+    *   Enables resumable uploads, parallel uploads, and efficient deduplication.
+3.  **What is Differential Sync?**
+    *   Syncing only the parts of a file that have changed, rather than the whole file.

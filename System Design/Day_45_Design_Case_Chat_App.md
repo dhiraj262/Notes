@@ -1,177 +1,201 @@
-# Day 45: Design Case - Chat App (WhatsApp/Telegram)
+# Day 45: Design Case - Chat App (WhatsApp)
 
 ## 🎯 Goal
-Design a real-time chat application similar to WhatsApp or Telegram that supports 1-on-1 and Group messaging.
-**Focus**: Low Latency, High Availability, and Delivery Semantics.
+Design a real-time chat application similar to WhatsApp or Facebook Messenger.
+**Focus**: Low Latency, High Throughput, Message Delivery Guarantee.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **1-on-1 Chat**: Real-time message delivery.
-2.  **Group Chat**: Support groups with up to 256 members.
-3.  **Status Indicators**: Sent, Delivered, Read.
-4.  **Online/Offline Status**: Show if a user is online.
-5.  **Media**: Support sending images/videos (Briefly).
+1.  **One-on-One Chat**: Real-time messaging between two users.
+2.  **Group Chat**: Messaging within a group (max 256 members).
+3.  **Online Presence**: Show if a user is "Online" or "Last Seen".
+4.  **Media Sharing**: Images/Videos (optional, but affects storage).
+5.  **Read Receipts**: Sent, Delivered, Read ticks.
 
 ### Non-Functional
 1.  **Low Latency**: Real-time experience (< 100ms).
-2.  **Consistency**: Messages must be ordered (FIFO).
-3.  **Availability**: Always writeable (CAP Theorem: AP or CP?).
-4.  **Security**: End-to-End Encryption (Optional for interview scope).
+2.  **Consistency**: Messages must appear in order.
+3.  **Availability**: High availability, but CAP theorem implies consistency is critical for history.
+4.  **Scale**: 1 Billion users, 100 Billion messages/day.
 
 ---
 
 ## 📐 Capacity Estimation
-*   **DAU**: 2 Billion Users (WhatsApp scale).
-*   **Messages**: 50 per user/day -> **100 Billion msgs/day**.
-*   **QPS**: 100B / 86400 ≈ **1.2 Million msgs/sec**.
-*   **Storage**: 100B * 50 bytes (avg) = **5 TB/day** (Text only).
-*   **Bandwidth**: High.
+*   **DAU**: 500 Million Users.
+*   **Msgs/User**: 40 messages/day.
+*   **Total Messages**: 20 Billion/day.
+*   **QPS**: 20B / 86400 ≈ **230k msg/sec**.
+*   **Peak**: 230k * 3 ≈ **700k msg/sec**.
+*   **Storage**:
+    *   Avg msg size = 100 bytes.
+    *   Daily storage = 20B * 100B = 2TB/day.
+    *   5 Years = 2TB * 365 * 5 ≈ **3.6 PB**.
 
 ---
 
 ## 🧠 Core Design Decisions
 
 ### 1. Protocol: HTTP vs WebSockets
-*   **HTTP (Pull)**: Client polls every second. Too much overhead/latency.
-*   **WebSockets (Push)**: Persistent bi-directional connection. Server pushes message to client instantly.
-*   **Decision**: **WebSockets** for real-time delivery.
+*   **HTTP**: Request/Response. Bad for "server pushing" messages to client. Polling is inefficient.
+*   **WebSockets**: Bi-directional, persistent connection. Ideal for chat.
+*   **Decision**: Use **WebSockets** for sending/receiving messages. Use **HTTP/REST** for file uploads, profile updates, and authentication.
 
 ### 2. Database: SQL vs NoSQL
-*   **Access Pattern**: Write-heavy, Read-sequential (History).
-*   **SQL**: Hard to scale to 100B writes/day.
-*   **NoSQL (LSM Tree)**: **Cassandra** or **HBase**. Optimized for heavy writes and range scans (fetch last 50 msgs).
-*   **Decision**: **Cassandra/HBase**. Key: `chat_id` + `timestamp`.
+*   We need extremely high write throughput and simple key-value lookups (Get history for Chat ID).
+*   **RDBMS (MySQL/Postgres)**: Hard to scale writes for 20B/day.
+*   **NoSQL (Cassandra/HBase)**: Wide-column stores are perfect for time-series chat logs.
+*   **Decision**: **Cassandra** (or ScyllaDB). Partition Key: `chat_id`, Clustering Key: `timestamp`.
 
-### 3. Message Delivery Flow
-*   User A -> Load Balancer -> Chat Server (WebSocket) -> User B.
-*   **If User B is Offline?** Store in DB. When B connects, push pending messages.
+### 3. Message ID Generation
+*   Need global unique ordering? No, only ordering *within* a chat matters.
+*   Can use `Snowflake ID` (64-bit sortable ID) or a local counter per chat.
+### 1. Communication Protocol: WebSocket
+*   **Polling (HTTP)**: Client asks "Any new msg?" every 2s. High server load, latency.
+*   **Long Polling**: Client waits until server has data. Better, but still header overhead.
+*   **WebSocket**: Full-duplex persistent connection. Best for real-time chat.
+*   **Decision**: Use **WebSockets** for active sessions. Use **Push Notifications** (FCM/APNS) for offline users.
+
+### 2. Database Choice: Cassandra/HBase (NoSQL)
+*   **SQL (MySQL/Postgres)**: Good for small scale. Scaling writes to 700k/sec requires massive sharding.
+*   **NoSQL (Cassandra)**: Excellent write throughput. Efficient range queries (fetch last 50 msgs for ChatID).
+*   **Data Model**:
+    *   `Partition Key`: `ChatID` (stores all msgs for a conversation together).
+    *   `Clustering Key`: `Timestamp` (orders messages by time).
+
+### 3. Message Synchronization (Sequence IDs)
+*   Distributed clocks are unreliable.
+*   Use a monotonically increasing Sequence ID per chat.
+*   The client keeps track of `last_seq_id`. When reconnecting, asks server "Give me msgs > last_seq_id".
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Chat Service (Stateful)**: Maintains WebSocket connections. Map: `user_id` -> `socket_connection`.
-2.  **Presence Service**: Redis-backed. `SET user:123:status "ONLINE" EX 30`. Heartbeats keep it alive.
-3.  **Message Queue**: Kafka. To decouple ingestion from processing (Push notifications, Analytics).
-4.  **Database**: Cassandra cluster for chat history.
-5.  **Push Notification**: If WebSocket is broken/offline, fall back to FCM/APNS.
+1.  **Chat Service (WebSocket Server)**: Maintains persistent connections with online users. Statefull (needs Sticky Sessions or Redis Pub/Sub to route messages).
+2.  **Presence Service**: Tracks "Online/Offline". Uses Redis Heartbeat (TTL 10s).
+3.  **Message Store**: Cassandra/HBase. Stores chat history.
+4.  **Push Notification Service**: If user is not connected to WebSocket, send Push.
+5.  **Asset Service**: S3/CDN for images/videos.
 
-### The "Store-and-Forward" Model
-1.  **Bob sends to Alice**.
-2.  Server saves to **Cassandra** (Msg ID: 101, Status: SENT).
-3.  Server checks Redis: Is Alice Online?
-    *   **Yes**: Send via WebSocket. Update Status -> DELIVERED.
-    *   **No**: Trigger Push Notification.
+**Flow (User A sends to User B):**
+1.  User A sends msg to `Chat Service`.
+2.  Server assigns `MessageID` and Timestamp.
+3.  Server saves to `Message Store` (Cassandra).
+4.  Server checks `Presence Service` for User B.
+    *   If **Online**: Find which Chat Server holds B's connection. Forward msg via Redis Pub/Sub. Push to B via WebSocket.
+    *   If **Offline**: Send to `Push Notification Service`.
 
 ---
 
-## 💻 Code Simulation: WebSocket Server Logic
+## 💻 Code Simulation: Simple WebSocket Chat
 
-Simulating the core routing logic for a WebSocket-based chat server.
+Simulating a chat server that handles connections and broadcasts messages.
 
 ```python
-import time
-import collections
 import threading
+import time
+import queue
 
 class ChatServer:
     def __init__(self):
-        # Maps user_id -> mock_socket_connection
-        self.connected_sockets = {}
-        # Emulating a Database for offline messages
-        self.offline_store = collections.defaultdict(list)
+        self.clients = {} # user_id -> queue
+        self.lock = threading.Lock()
 
     def connect(self, user_id):
-        self.connected_sockets[user_id] = f"WS_CONN_{user_id}"
-        print(f"✅ User {user_id} CONNECTED.")
-
-        # Check for offline messages
-        if self.offline_store[user_id]:
-            print(f"   📬 Delivering {len(self.offline_store[user_id])} pending messages to {user_id}...")
-            for msg in self.offline_store[user_id]:
-                print(f"      -> {msg}")
-            self.offline_store[user_id] = [] # Clear DB
+        with self.lock:
+            self.clients[user_id] = queue.Queue()
+        print(f"✅ User {user_id} Connected")
 
     def disconnect(self, user_id):
-        if user_id in self.connected_sockets:
-            del self.connected_sockets[user_id]
-            print(f"❌ User {user_id} DISCONNECTED.")
+        with self.lock:
+            if user_id in self.clients:
+                del self.clients[user_id]
+        print(f"❌ User {user_id} Disconnected")
 
     def send_message(self, sender, receiver, content):
-        timestamp = time.time()
-        print(f"📤 [Msg] {sender} -> {receiver}: '{content}'")
+        timestamp = time.strftime('%H:%M:%S')
+        msg_obj = {"from": sender, "content": content, "time": timestamp}
 
-        if receiver in self.connected_sockets:
-            # Real-time delivery
-            socket = self.connected_sockets[receiver]
-            print(f"   🚀 Pushed to {socket} (Online)")
-            return "DELIVERED"
-        else:
-            # Store for later
-            self.offline_store[receiver].append({"from": sender, "text": content, "ts": timestamp})
-            print(f"   💾 stored in DB (User Offline)")
-            return "SENT"
+        # Save to DB (Mock)
+        print(f"💾 Saved to DB: {msg_obj}")
+
+        with self.lock:
+            if receiver in self.clients:
+                self.clients[receiver].put(msg_obj)
+                print(f"🚀 Delivered to {receiver} via WebSocket")
+            else:
+                print(f"🔔 User {receiver} Offline. Sent Push Notification.")
+
+    def listen(self, user_id):
+        """ Simulates the client listening loop """
+        q = self.clients.get(user_id)
+        if not q: return
+        while True:
+            try:
+                msg = q.get(timeout=1)
+                print(f"📩 User {user_id} received: {msg['content']} from {msg['from']}")
+            except queue.Empty:
+                break # Just for simulation, stop if empty
 
 if __name__ == "__main__":
     server = ChatServer()
 
-    # Scenario
+    # Users connect
     server.connect("Alice")
     server.connect("Bob")
 
-    server.send_message("Alice", "Bob", "Hey Bob!")
+    # Chatting
+    server.send_message("Alice", "Bob", "Hello Bob!")
 
+    # Receive
+    threading.Thread(target=server.listen, args=("Bob",)).start()
+    time.sleep(2)
+
+    # Offline scenario
     server.disconnect("Bob")
     server.send_message("Alice", "Bob", "Are you there?")
-
-    server.connect("Bob") # Reconnects, gets message
 ```
 
 **Output:**
 ```
-✅ User Alice CONNECTED.
-✅ User Bob CONNECTED.
-📤 [Msg] Alice -> Bob: 'Hey Bob!'
-   🚀 Pushed to WS_CONN_Bob (Online)
-❌ User Bob DISCONNECTED.
-📤 [Msg] Alice -> Bob: 'Are you there?'
-   💾 stored in DB (User Offline)
-✅ User Bob CONNECTED.
-   📬 Delivering 1 pending messages to Bob...
-      -> {'from': 'Alice', 'text': 'Are you there?', 'ts': ...}
+✅ User Alice Connected
+✅ User Bob Connected
+💾 Saved to DB: {'from': 'Alice', 'content': 'Hello Bob!', 'time': '...'}
+🚀 Delivered to Bob via WebSocket
+📩 User Bob received: Hello Bob! from Alice
+❌ User Bob Disconnected
+💾 Saved to DB: {'from': 'Alice', 'content': 'Are you there?', 'time': '...'}
+🔔 User Bob Offline. Sent Push Notification.
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. Group Chat: Read Receipts
-*   **Trap**: Don't update the message row for every read receipt (Write amplification).
-*   **Fix**: Store `last_read_message_id` for each user-group pair.
-*   `GroupMember(group_id, user_id, last_read_id)`.
+### 1. How to handle Group Chats?
+*   **Write Amplification**: Storing a copy for every user is expensive.
+*   **Read Amplification**: Storing once (referenced by GroupID) means every user queries the same row.
+*   **Solution**: Store message once with `GroupID`.
+    *   For delivery: Server looks up `GroupMembers` (cached in Redis), loops through them, and pushes via WebSocket.
 
-### 2. Media Files
-*   Don't send binary data over WebSocket/MessageQueue.
-*   **Flow**:
-    1.  Client uploads Image to **S3/Blob Storage**.
-    2.  Get URL (`s3.aws.com/img.jpg`).
-    3.  Send Chat Message with text: `None` and attachment_url: `...`.
+### 2. "Last Seen" feature scaling?
+*   Don't write to DB on every heartbeat.
+*   Update Redis every 5 seconds.
+*   Only persist to DB (Cassandra) when user disconnects or every 5 mins.
 
-### 3. Sequence Numbers
-*   How to keep messages in order?
-*   Use a **Sequence Generator** (Snowflake ID) that is sortable by time.
-*   Cassandra Clustering Key orders by ID automatically.
+### 3. End-to-End Encryption (E2EE)?
+*   Server stores encrypted blob. Server cannot read the message.
+*   Keys are exchanged between clients (Signal Protocol).
 
 ---
 
 ## ⚡ Flashcards
-1.  **Why WebSocket over HTTP?**
-    *   Lower overhead (header compression), Full-duplex (Server can push).
-2.  **Long Polling vs WebSockets?**
-    *   Long Polling holds a request open. Good for low frequency updates. WebSockets better for chat/gaming.
-3.  **Fan-out on Read vs Write (Group Chat)?**
-    *   **Write**: Sender creates 1 message, server copies to 100 inboxes. (Faster read, Slower write).
-    *   **Read**: Sender writes 1 message to Group ID. Users pull from Group ID. (Better for mega-groups).
+1.  **WebSocket vs HTTP for Chat?**
+    *   WebSocket is persistent and bi-directional. HTTP is req-resp (high overhead for real-time).
+2.  **Why NoSQL (Cassandra) for Chat History?**
+    *   Chat logs are write-heavy and append-only. Cassandra handles high write throughput and partitions well by ChatID.
+3.  **What is a "Sticky Session"?**
+    *   Ensuring a client's WebSocket connection stays on the same server for the duration of the session.

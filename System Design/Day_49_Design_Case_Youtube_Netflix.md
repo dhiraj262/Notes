@@ -1,190 +1,173 @@
-# Day 49: Design Case - Youtube / Netflix
+# Day 49: Design Case - Youtube/Netflix (Video Streaming)
 
 ## 🎯 Goal
-Design a global video streaming platform capable of handling massive upload traffic and delivering low-latency HD video.
-**Focus**: Transcoding, CDN, and Adaptive Bitrate Streaming.
+Design a video streaming platform where users can upload, view, and share videos.
+**Focus**: Large File Handling, Transcoding, CDNs, and Adaptive Streaming.
 
 ---
 
 ## 🗣️ Requirements
 
 ### Functional
-1.  **Upload**: Users can upload videos (GBs in size).
-2.  **View**: Users can stream videos instantly.
-3.  **Search/Feed**: (Out of scope for this specific design, focus on media).
-4.  **Quality**: Support 360p, 720p, 1080p, 4K.
+1.  **Upload**: Users upload video files (MOV, MP4, AVI).
+2.  **View**: Users watch videos (smooth streaming, no buffering).
+3.  **Search**: Users can search by title.
+4.  **Stats**: View count, Likes.
 
 ### Non-Functional
-1.  **Reliability**: No buffering.
-2.  **Availability**: Videos always available.
-3.  **Scalability**: Handle popular releases (High concurrency).
+1.  **High Availability**: Videos must always be playable.
+2.  **Scalability**: Support viral videos (Justin Bieber effect).
+3.  **Performance**: Low latency start time.
+4.  **Reliability**: No lost uploads.
 
 ---
 
 ## 📐 Capacity Estimation
-*   **Users**: 1 Billion DAU.
-*   **Uploads**: 500 hours of video uploaded per minute (Youtube stats).
+*   **DAU**: 100 Million.
+*   **Uploads**: 1 video/user/year -> 300k videos/day.
+*   **Views**: 5 videos/user/day -> 500 Million views/day.
 *   **Storage**:
-    *   1 min video = 50MB (Source).
-    *   Transcoded versions (SD, HD, 4K) = 100MB total.
-    *   500 hrs * 60 * 100MB = **3 TB/min** -> **4 PB/day**.
-*   **Bandwidth**: The biggest cost.
+    *   Avg video size: 500MB (Source). Transcoded versions: 1GB total.
+    *   Daily: 300k * 1GB = 300 TB/day.
+    *   Bandwidth: Massive. CDN is mandatory.
 
 ---
 
 ## 🧠 Core Design Decisions
 
-### 1. Upload Protocol
-*   **Problem**: Uploading a 5GB file through the API Server crashes it.
-*   **Solution**: **Pre-signed URLs**.
-    *   Client asks API: "I want to upload".
-    *   API returns S3 URL with signature.
-    *   Client uploads directly to S3 (Object Storage).
+### 1. Protocols: UDP vs TCP vs HTTP
+*   **UDP**: Fast but loses packets (glitches). Good for live calls (Zoom), bad for Movies.
+*   **TCP**: Reliable but slow (head-of-line blocking).
+*   **HTTP (DASH/HLS)**: **Winner**.
+    *   Videos are chunked into small segments (2-10 seconds).
+    *   Client downloads chunks via HTTP.
+    *   Firewall friendly. CDN friendly.
 
-### 2. Video Processing (Transcoding)
-*   **Problem**: Raw file is `.mov` (huge). Phones need `.mp4` (H.264/H.265).
-*   **Solution**: Directed Acyclic Graph (DAG).
-    *   Split video into 1-minute chunks.
-    *   Process chunks in parallel (Audio extraction, Video encoding).
-    *   Merge.
-*   **Format**: **HLS (HTTP Live Streaming)** or **MPEG-DASH**.
+### 2. Adaptive Bitrate Streaming (ABR)
+*   **Problem**: Users have different internet speeds (4G, 5G, Fiber).
+*   **Solution**: Transcode original video into multiple resolutions (360p, 720p, 1080p, 4K) and bitrates.
+*   Client automatically switches quality based on bandwidth.
 
-### 3. Streaming: Adaptive Bitrate (ABS)
-*   Detect user's bandwidth.
-*   If slow (3G) -> Serve `chunk_1_360p.ts`.
-*   If fast (WiFi) -> Serve `chunk_2_1080p.ts`.
-*   Switch seamlessly without buffering.
-
-### 4. Content Delivery Network (CDN)
-*   Cache popular content at the Edge (ISP PoPs).
-*   **Long Tail**: Unpopular videos stay in S3 (Origin).
-*   **Netflix Open Connect**: Netflix installs its own hardware in ISP data centers.
+### 3. Storage: BLOB + CDN
+*   **Original File**: Store in AWS S3 (Glacier for backup).
+*   **Transcoded Files**: Store in S3 (Standard).
+*   **Delivery**: Push popular content to CDNs (Cloudfront/Akamai) at the edge.
 
 ---
 
 ## 🏗️ System Architecture
 
-1.  **Upload Service**: Generates Pre-signed URLs. Updates Metadata DB.
-2.  **Object Storage (S3)**: Stores Raw Video.
-3.  **Transcoding Service (Workers)**:
-    *   Listen to S3 Events.
-    *   Download Raw -> FFMpeg -> Upload Transcoded chunks to S3.
-4.  **CDN**: Pulls data from S3. Serves to user.
-5.  **Metadata DB**: Stores video title, description, URL, user info.
-6.  **Completion Service**: Updates DB when transcoding is done.
+### Upload Path
+1.  **User** uploads video to `Original Storage` (S3) via Signed URL.
+2.  **Upload Service** updates Metadata DB (Processing status = "Pending").
+3.  **Transcoding Service** (Worker Cluster):
+    *   Pulls video from S3.
+    *   Splits into chunks.
+    *   Encodes to mp4, webm, hls.
+    *   Generates Thumbnail.
+4.  **Completion**: Updates DB (Status = "Ready"). Pushes to CDN.
+
+### Viewing Path
+1.  **User** requests video page.
+2.  **Web Server** returns Metadata (Title, Description) + **Manifest File URL**.
+3.  **Client Player** reads Manifest (list of .ts chunks for different qualities).
+4.  **Client** downloads chunks from nearest **CDN**.
+5.  **Client** adapts quality dynamically.
 
 ---
 
-## 💻 Code Simulation: Transcoding Pipeline
+## 💻 Code Simulation: Adaptive Bitrate Selector
 
-Simulating the flow of uploading and processing a video into multiple resolutions.
+Simulating the client-side logic that chooses the next chunk quality based on bandwidth.
 
 ```python
+import random
 import time
-import concurrent.futures
 
-class VideoPlatform:
+class VideoPlayer:
     def __init__(self):
-        self.metadata_db = {} # video_id -> status
-        self.cdn_links = {}   # video_id -> {res -> url}
+        # Available bitrates in kbps
+        self.qualities = {
+            "360p": 500,
+            "720p": 1500,
+            "1080p": 4000,
+            "4K": 12000
+        }
+        self.buffer = 0 # seconds of video buffered
 
-    def upload_request(self, video_id):
-        print(f"👤 User: Requesting upload for {video_id}...")
-        # Simulate Pre-signed URL
-        upload_url = f"https://s3.bucket.com/{video_id}"
-        print(f"🌐 API: Generated Signed URL: {upload_url}")
-        self.metadata_db[video_id] = "PROCESSING"
+    def estimate_bandwidth(self):
+        # Simulate fluctuating network (kbps)
+        return random.randint(300, 8000)
 
-        # Trigger Transcoding (Async)
-        self.trigger_transcoding(video_id)
+    def select_quality(self, bandwidth):
+        # Conservative approach: Use 80% of bandwidth
+        safe_bandwidth = bandwidth * 0.8
 
-    def trigger_transcoding(self, video_id):
-        print(f"⚙️ Transcoder: Started job for {video_id}")
+        selected = "360p" # Default fallback
+        for quality, bitrate in sorted(self.qualities.items(), key=lambda x: x[1]):
+            if bitrate <= safe_bandwidth:
+                selected = quality
+            else:
+                break
+        return selected
 
-        # Simulate Parallel Processing of Resolutions
-        resolutions = ["360p", "720p", "1080p"]
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(self._process_res, video_id, res) for res in resolutions]
-            concurrent.futures.wait(futures)
+    def download_chunk(self):
+        bw = self.estimate_bandwidth()
+        quality = self.select_quality(bw)
+        print(f"📡 Network: {bw} kbps | Choosing: {quality}")
 
-        self.metadata_db[video_id] = "READY"
-        print(f"✅ Transcoder: Video {video_id} is READY.")
+        # Simulate download
+        time.sleep(0.5)
+        self.buffer += 4 # Add 4 seconds to buffer
 
-    def _process_res(self, video_id, res):
-        print(f"   [Worker] Encoding {res}...")
-        time.sleep(0.5) # Simulate CPU heavy FFMpeg
-        url = f"cdn.net/{video_id}/{res}.m3u8"
-
-        if video_id not in self.cdn_links:
-            self.cdn_links[video_id] = {}
-        self.cdn_links[video_id][res] = url
-        print(f"   [Worker] Uploaded {res} to {url}")
-
-    def stream(self, video_id, bandwidth_kbps):
-        if self.metadata_db.get(video_id) != "READY":
-            print("⚠️ Video not ready yet.")
-            return
-
-        # Adaptive Bitrate Logic
-        if bandwidth_kbps < 1000:
-            quality = "360p"
-        elif bandwidth_kbps < 5000:
-            quality = "720p"
-        else:
-            quality = "1080p"
-
-        print(f"🎬 Player (BW: {bandwidth_kbps}): Playing {quality} -> {self.cdn_links[video_id][quality]}")
+    def play(self):
+        for i in range(5):
+            self.download_chunk()
+            print(f"   ▶️ Playing... Buffer: {self.buffer}s")
+            self.buffer -= 2 # Consume 2 seconds
+            if self.buffer < 0:
+                print("   ⚠️ Buffering...")
+                self.buffer = 0
 
 if __name__ == "__main__":
-    youtube = VideoPlatform()
-    youtube.upload_request("Cat_Video_101")
-
-    print("\n--- Client Viewing ---")
-    youtube.stream("Cat_Video_101", 500)   # Mobile Data
-    youtube.stream("Cat_Video_101", 10000) # Fiber WiFi
+    player = VideoPlayer()
+    player.play()
 ```
 
 **Output:**
 ```
-👤 User: Requesting upload for Cat_Video_101...
-🌐 API: Generated Signed URL: https://s3.bucket.com/Cat_Video_101
-⚙️ Transcoder: Started job for Cat_Video_101
-   [Worker] Encoding 360p...
-   [Worker] Encoding 720p...
-   [Worker] Encoding 1080p...
-   [Worker] Uploaded 360p to cdn.net/Cat_Video_101/360p.m3u8
-   [Worker] Uploaded 1080p to cdn.net/Cat_Video_101/1080p.m3u8
-   [Worker] Uploaded 720p to cdn.net/Cat_Video_101/720p.m3u8
-✅ Transcoder: Video Cat_Video_101 is READY.
-
---- Client Viewing ---
-🎬 Player (BW: 500): Playing 360p -> cdn.net/Cat_Video_101/360p.m3u8
-🎬 Player (BW: 10000): Playing 1080p -> cdn.net/Cat_Video_101/1080p.m3u8
+📡 Network: 7200 kbps | Choosing: 1080p
+   ▶️ Playing... Buffer: 4s
+📡 Network: 1200 kbps | Choosing: 360p
+   ▶️ Playing... Buffer: 6s
+📡 Network: 4500 kbps | Choosing: 1080p
+   ▶️ Playing... Buffer: 8s
+...
 ```
 
 ---
 
 ## 🧠 Interview Nuances
 
-### 1. Cost Optimization (CDN)
-*   CDN is expensive.
-*   **Strategy**: Only cache popular videos on CDN. Serve long-tail (10 views/year) directly from S3 (or a high-latency cold tier).
+### 1. How to optimize storage costs?
+*   **Deduplication**: Check hash of uploaded file.
+*   **Cold Storage**: Move unpopular videos to S3 Glacier (cheaper, slower access) after 6 months.
+*   **Codec Efficiency**: Use HEVC (H.265) or AV1 to save 30% bandwidth over H.264.
 
-### 2. Deduplication
-*   User A uploads "Movie.mp4". User B uploads same "Movie.mp4".
-*   Check Hash (MD5) before upload. If exists, just link User B to existing file. Saves storage and compute.
+### 2. Directed Acyclic Graph (DAG) for Transcoding
+*   Video processing is a pipeline: `Upload -> Split -> [Audio Extract, Video Resize, Thumbnail] -> Merge`.
+*   Facebook/Netflix manage this using a DAG scheduler to parallelize tasks.
 
 ### 3. DRM (Digital Rights Management)
-*   Encrypt chunks.
-*   Player requests decryption key from a license server.
+*   Need to encrypt chunks so users can't just download and resell Netflix movies.
+*   Use Widevine/FairPlay.
 
 ---
 
 ## ⚡ Flashcards
-1.  **What is HLS?**
-    *   **HTTP Live Streaming**. Breaks video into small `.ts` chunks (10s) and uses a `.m3u8` playlist file to index them.
-2.  **Why use Pre-signed URLs?**
-    *   To offload binary traffic from API servers. API servers handle lightweight JSON; S3 handles heavy blobs.
-3.  **Push vs Pull CDN?**
-    *   **Pull**: CDN fetches from Origin on first request. (Standard).
-    *   **Push**: We manually upload content to CDN. (Good for Netflix launches).
+1.  **What is a CDN?**
+    *   Content Delivery Network. A network of servers distributed geographically to deliver content (videos, images) from the location closest to the user.
+2.  **What is HLS?**
+    *   HTTP Live Streaming. An ABR protocol developed by Apple. Splits video into `.ts` files and uses a `.m3u8` playlist.
+3.  **Why split videos into chunks?**
+    *   Allows fast seeking (jump to 50:00 without downloading 0-49:00). Allows switching quality mid-stream.
